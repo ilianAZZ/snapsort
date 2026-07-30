@@ -55,7 +55,7 @@ touch your archives.
 ### 1 · Docker Compose — nothing to clone, nothing to install
 
 Save [`docker-compose.yml`](docker-compose.yml) into an empty folder, drop your
-`mydata~*.zip` archives into `./export` next to it, then:
+`mydata~*.zip` archives into `./data` next to it, then:
 
 ```bash
 docker compose up
@@ -71,7 +71,7 @@ services:
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
-      - ./export:/data:ro     # your archives, read-only
+      - ./data:/data:ro       # your archives, read-only
       - ./sorted:/out         # the result
 ```
 

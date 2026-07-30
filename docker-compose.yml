@@ -1,7 +1,7 @@
 # Run Snapchat Memories Sorter without cloning anything:
 #
 #   1. put this file in an empty folder
-#   2. drop your mydata~*.zip archives into ./export
+#   2. drop your mydata~*.zip archives into ./data
 #   3. docker compose up
 #   4. open http://127.0.0.1:8765
 #
@@ -17,7 +17,7 @@ services:
     volumes:
       # Your export, mounted read-only — the OS itself then guarantees
       # Snapchat Memories Sorter cannot touch your archives.
-      - ./export:/data:ro
+      - ./data:/data:ro
       # Where the sorted memories land.
       - ./sorted:/out
     restart: "no"
