@@ -1,8 +1,8 @@
-"""Serveur HTTP local (bibliothèque standard uniquement).
+"""Local HTTP server (standard library only).
 
-Sert l'interface web, l'API JSON et les médias (avec support des requêtes
-Range, indispensable pour la lecture et le déplacement dans les vidéos).
-Écoute uniquement sur 127.0.0.1 : rien ne sort de la machine.
+Serves the web interface, the JSON API and the media files (with Range request
+support, which video playback and seeking depend on). Binds to 127.0.0.1 only:
+nothing ever leaves the machine.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def get_session() -> Session | None:
 
 
 # --------------------------------------------------------------------------
-# Utilitaires système
+# System helpers
 # --------------------------------------------------------------------------
 
 def list_dir(path: str) -> dict:
@@ -45,8 +45,8 @@ def list_dir(path: str) -> dict:
         path = os.path.expanduser("~")
     dirs, zips = [], []
     try:
-        with os.scandir(path) as it:
-            for entry in it:
+        with os.scandir(path) as listing:
+            for entry in listing:
                 if entry.name.startswith("."):
                     continue
                 try:
@@ -89,13 +89,13 @@ def reveal(path: str):
 # --------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SnapSort"
+    server_version = "Snapchat Memories Sorter"
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, *args):  # silence
+    def log_message(self, *args):  # keep the console quiet
         pass
 
-    # ------------------------------------------------------------ réponses
+    # ----------------------------------------------------------- responses
 
     def _send_json(self, payload, status=200):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -122,21 +122,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             size = os.path.getsize(path)
         except OSError:
-            return self._error("fichier introuvable", 404)
+            return self._error("file not found", 404)
 
         ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
         start, end = 0, size - 1
         status = 200
-        rng = self.headers.get("Range")
-        if rng:
-            m = RANGE_RE.match(rng.strip())
-            if m:
-                g1, g2 = m.group(1), m.group(2)
-                if g1:
-                    start = int(g1)
-                    end = int(g2) if g2 else size - 1
-                elif g2:                       # suffixe : bytes=-N
-                    start = max(0, size - int(g2))
+        header = self.headers.get("Range")
+        if header:
+            match = RANGE_RE.match(header.strip())
+            if match:
+                first, last = match.group(1), match.group(2)
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                elif last:                     # suffix form: bytes=-N
+                    start = max(0, size - int(last))
                 if start >= size:
                     self.send_response(416)
                     self.send_header("Content-Range", f"bytes */{size}")
@@ -176,7 +176,11 @@ class Handler(BaseHTTPRequestHandler):
         rel = posixpath.normpath(rel).lstrip("/")
         path = os.path.join(WEB_DIR, rel)
         if not os.path.abspath(path).startswith(WEB_DIR) or not os.path.isfile(path):
-            return self._error("introuvable", 404)
+            # The app owns its URLs (/sort, /new…): anything that is not a real
+            # asset falls back to the page, which routes it client-side.
+            if "." in posixpath.basename(rel):
+                return self._error("not found", 404)
+            path = os.path.join(WEB_DIR, "index.html")
         ctype = mimetypes.guess_type(path)[0] or "text/plain"
         with open(path, "rb") as fh:
             body = fh.read()
@@ -210,8 +214,8 @@ class Handler(BaseHTTPRequestHandler):
                 "suggestions": scanner.suggest_sources(),
                 "session": session.snapshot() if session else None,
                 "resumable": bool(session),
-                # vrai quand la session vient des options --source/--dest :
-                # inutile de repasser par l'assistant.
+                # True when the session came from --source/--dest: the wizard
+                # has nothing left to ask.
                 "autostart": bool(state.get("autostart")),
             })
 
@@ -220,12 +224,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/session":
             if not session:
-                return self._error("aucune session", 404)
+                return self._error("no session", 404)
             return self._send_json(session.snapshot())
 
         if route == "/api/queue":
             if not session:
-                return self._error("aucune session", 404)
+                return self._error("no session", 404)
             start = int((query.get("start") or [session.cursor])[0])
             count = min(int((query.get("count") or [6])[0]), 30)
             items, nxt = session.queue(start, count)
@@ -234,26 +238,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if route.startswith("/api/media/"):
             if not session:
-                return self._error("aucune session", 404)
+                return self._error("no session", 404)
             parts = route[len("/api/media/"):].split("/")
             if len(parts) != 2:
-                return self._error("requête invalide", 400)
+                return self._error("bad request", 400)
             item_id, which = urllib.parse.unquote(parts[0]), parts[1]
             item = session.by_id.get(item_id)
             if not item or which not in ("main", "overlay"):
-                return self._error("média introuvable", 404)
+                return self._error("media not found", 404)
             path = session.cache.path_for(item, which) if session.cache else None
             if not path:
-                return self._error("média illisible", 404)
+                return self._error("media unreadable", 404)
             return self._send_file(path)
 
         if route == "/api/report":
             if not session:
-                return self._error("aucune session", 404)
+                return self._error("no session", 404)
             return self._send_json({"markdown": session.report(),
-                                    "path": os.path.join(session.dest, "RAPPORT.md")})
+                                    "path": os.path.join(session.dest, "REPORT.md")})
 
-        return self._error("route inconnue", 404)
+        return self._error("unknown route", 404)
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
@@ -264,23 +268,23 @@ class Handler(BaseHTTPRequestHandler):
             sources = [s for s in body.get("sources", []) if os.path.exists(s)]
             dest = body.get("dest") or ""
             if not sources:
-                return self._error("aucune source valide sélectionnée")
+                return self._error("no valid source selected")
             if not dest:
-                return self._error("destination manquante")
+                return self._error("destination missing")
             dest = os.path.abspath(os.path.expanduser(dest))
             for src in sources:
                 folder = os.path.abspath(src if os.path.isdir(src) else os.path.dirname(src))
                 if dest == folder or dest.startswith(folder + os.sep):
                     return self._error(
-                        "la destination est à l'intérieur d'une source : "
-                        "choisis un dossier séparé pour éviter de relire ce que tu viens de trier"
+                        "the destination sits inside a source: pick a separate folder "
+                        "so you never re-read what you have just sorted"
                     )
             try:
                 os.makedirs(dest, exist_ok=True)
             except OSError as exc:
-                return self._error(f"destination inutilisable : {exc}")
+                return self._error(f"destination unusable: {exc}")
             if not os.access(dest, os.W_OK):
-                return self._error("destination non accessible en écriture")
+                return self._error("destination is not writable")
             new = Session(dest)
             new.start(sources, body.get("options") or {})
             with state_lock:
@@ -291,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             dest = body.get("dest") or ""
             candidate = Session(dest)
             if not candidate.load():
-                return self._error("aucune session trouvée dans ce dossier", 404)
+                return self._error("no session found in that folder", 404)
             with state_lock:
                 state["session"] = candidate
             return self._send_json({"ok": True, "session": candidate.snapshot()})
@@ -302,11 +306,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"ok": True})
 
         if not session:
-            return self._error("aucune session", 404)
+            return self._error("no session", 404)
 
         if route == "/api/decide":
             try:
                 session.decide(body.get("id"), body.get("action"), body.get("folder"))
+            except (KeyError, ValueError) as exc:
+                return self._error(str(exc))
+            return self._send_json({"ok": True, "counts": session.counts(),
+                                    "cursor": session.cursor, "folders": session.folders})
+
+        if route == "/api/merge":
+            try:
+                session.merge(body.get("id"))
             except (KeyError, ValueError) as exc:
                 return self._error(str(exc))
             return self._send_json({"ok": True, "counts": session.counts(),
@@ -319,8 +331,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "folders": session.folders})
 
         if route == "/api/replay":
-            n = session.replay(body.get("action") or "skip")
-            return self._send_json({"ok": True, "count": n, "cursor": session.cursor,
+            count = session.replay(body.get("action") or "skip")
+            return self._send_json({"ok": True, "count": count, "cursor": session.cursor,
                                     "counts": session.counts(), "folders": session.folders})
 
         if route == "/api/seek":
@@ -335,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
             folder = session.update_folder(body.get("id"), body.get("name"),
                                            body.get("key"), body.get("color"))
             if not folder:
-                return self._error("dossier introuvable", 404)
+                return self._error("folder not found", 404)
             return self._send_json({"ok": True, "folders": session.folders})
 
         if route == "/api/folders/delete":
@@ -343,10 +355,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"ok": True, "folders": session.folders})
 
         if route == "/api/options":
-            opts = body.get("options") or {}
+            options = body.get("options") or {}
             with session.lock:
-                session.options.update(opts)
-                reorder = "order" in opts
+                session.options.update(options)
+                reorder = "order" in options
                 if reorder:
                     session._apply_order()
             if reorder:
@@ -359,35 +371,36 @@ class Handler(BaseHTTPRequestHandler):
             reveal(body.get("path") or session.dest)
             return self._send_json({"ok": True})
 
-        return self._error("route inconnue", 404)
+        return self._error("unknown route", 404)
 
 
 # --------------------------------------------------------------------------
-# Lancement
+# Startup
 # --------------------------------------------------------------------------
 
 def find_port(preferred: int = 8765) -> int:
     for port in range(preferred, preferred + 40):
-        with socket.socket() as s:
+        with socket.socket() as sock:
             try:
-                s.bind(("127.0.0.1", port))
+                sock.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
-    raise RuntimeError("aucun port libre entre 8765 et 8805")
+    raise RuntimeError("no free port between 8765 and 8805")
 
 
-def serve(port: int | None = None, open_browser: bool = True) -> None:
+def serve(port: int | None = None, open_browser: bool = True, host: str = "127.0.0.1") -> None:
     port = port or find_port()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
-    url = f"http://127.0.0.1:{port}"
+    shown = "127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host
+    url = f"http://{shown}:{port}"
 
-    print("\n  \033[1;33m✦ SnapSort\033[0m — tri de tes souvenirs Snapchat")
+    print("\n  \033[1;33m✦ Snapchat Memories Sorter\033[0m — sort your Snapchat memories")
     print(f"  \033[2m↳\033[0m  {url}")
-    print("  \033[2mCtrl+C pour quitter\033[0m\n")
+    print("  \033[2mCtrl+C to quit\033[0m\n")
 
-    # Fermeture du terminal ou `kill` : on veut passer par le `finally` ci-dessous.
+    # Terminal closed or `kill`: we want to go through the `finally` below.
     def _quit(_signum, _frame):
         raise KeyboardInterrupt
 
@@ -406,9 +419,9 @@ def serve(port: int | None = None, open_browser: bool = True) -> None:
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n  À bientôt !\n")
+        print("\n  See you soon!\n")
     finally:
         session = get_session()
         if session:
-            session.save()  # aucune décision perdue à l'arrêt
+            session.save()  # no decision lost on shutdown
         httpd.shutdown()

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img"
+     aria-label="Snapchat Memories Sorter">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFC00"/>
+      <stop offset="1" stop-color="#FFD84D"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#g)"/>
+  <!-- The stack of cards being sorted, leaning away behind the mark. -->
+  <rect x="30" y="26" width="68" height="76" rx="13" fill="#131300" opacity=".13"
+        transform="rotate(-11 64 64)"/>
+  <rect x="34" y="24" width="60" height="80" rx="13" fill="#131300" opacity=".16"
+        transform="rotate(6 64 64)"/>
+  <!-- The spark: one memory, front and centre. -->
+  <path d="M64 22 Q71 57 106 64 Q71 71 64 106 Q57 71 22 64 Q57 57 64 22 Z"
+        fill="#131300"/>
+</svg>

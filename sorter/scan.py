@@ -1,8 +1,8 @@
-"""Découverte des sources et construction de l'index des memories.
+"""Source discovery and building the memory index.
 
-Une « source » est soit une archive .zip de l'export Snapchat, soit un dossier
-déjà décompressé. On lit uniquement le catalogue des zips (leur central
-directory) : aucun octet de média n'est décompressé pendant le scan.
+A "source" is either a .zip from the Snapchat export or an already extracted
+folder. Only the archives' catalogue (their central directory) is read: not one
+byte of media is decompressed during the scan.
 """
 
 from __future__ import annotations
@@ -31,14 +31,14 @@ def kind_of(ext: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Détection automatique des sources
+# Finding sources automatically
 # --------------------------------------------------------------------------
 
 def looks_like_export_zip(path: str) -> bool:
-    """Vrai si le zip contient un dossier memories/ (test rapide, sans extraction)."""
+    """True when the zip holds a memories/ folder (quick test, no extraction)."""
     try:
-        with zipfile.ZipFile(path) as z:
-            for name in z.namelist()[:400]:
+        with zipfile.ZipFile(path) as archive:
+            for name in archive.namelist()[:400]:
                 if "memories/" in name or "chat_media/" in name:
                     return True
     except Exception:
@@ -47,10 +47,10 @@ def looks_like_export_zip(path: str) -> bool:
 
 
 def suggest_sources(extra_dirs=()):
-    """Cherche des exports Snapchat dans les endroits habituels.
+    """Look for Snapchat exports in the usual places.
 
-    Renvoie une liste de groupes : {dir, files[], total_size} — un groupe par
-    dossier contenant des archives `mydata~*.zip`.
+    Returns a list of groups: {dir, files[], count, size} — one per folder
+    holding `mydata~*.zip` archives.
     """
     home = os.path.expanduser("~")
     roots = [
@@ -67,11 +67,12 @@ def suggest_sources(extra_dirs=()):
         if not os.path.isdir(root) or root in seen:
             continue
         seen.add(root)
-        # racine + un niveau de sous-dossiers
+        # the root itself plus one level of sub-folders
         candidates = [root]
         try:
-            with os.scandir(root) as it:
-                candidates += [e.path for e in it if e.is_dir() and not e.name.startswith(".")]
+            with os.scandir(root) as listing:
+                candidates += [e.path for e in listing
+                               if e.is_dir() and not e.name.startswith(".")]
         except OSError:
             pass
         for folder in candidates:
@@ -106,13 +107,13 @@ def suggest_sources(extra_dirs=()):
 # Scan
 # --------------------------------------------------------------------------
 
-def _add(bucket, key, part, rec):
-    bucket.setdefault(key, {})[part] = rec
+def _add(bucket, key, part, record):
+    bucket.setdefault(key, {})[part] = record
 
 
 def _scan_zip(path: str, bucket: dict, records: list, progress):
-    with zipfile.ZipFile(path) as z:
-        infos = z.infolist()
+    with zipfile.ZipFile(path) as archive:
+        infos = archive.infolist()
         for info in infos:
             if info.is_dir():
                 continue
@@ -121,22 +122,22 @@ def _scan_zip(path: str, bucket: dict, records: list, progress):
 
             if low == "memories_history.json":
                 try:
-                    data = json.loads(z.read(info).decode("utf-8", "replace"))
+                    data = json.loads(archive.read(info).decode("utf-8", "replace"))
                     records.extend(data.get("Saved Media") or [])
                 except Exception:
                     pass
                 continue
 
-            m = NAME_RE.match(base)
-            ext = (m.group("ext") if m else base.rsplit(".", 1)[-1]).lower()
+            match = NAME_RE.match(base)
+            ext = (match.group("ext") if match else base.rsplit(".", 1)[-1]).lower()
             if ext not in MEDIA_EXT:
                 continue
 
-            # Le mtime stocké dans le zip Snapchat est l'horodatage UTC du souvenir.
+            # The mtime stored in a Snapchat zip is the memory's UTC timestamp.
             ts = datetime(*info.date_time, tzinfo=timezone.utc).timestamp()
-            if m:
-                key = f"{m.group('date')}_{m.group('uid')}"
-                part = m.group("part")
+            if match:
+                key = f"{match.group('date')}_{match.group('uid')}"
+                part = match.group("part")
             else:
                 key, part = base.rsplit(".", 1)[0], "main"
             if part == "thumbnail":
@@ -150,7 +151,7 @@ def _scan_zip(path: str, bucket: dict, records: list, progress):
 
 def _scan_dir(path: str, bucket: dict, records: list, progress):
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != ".snapsort"]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d != ".sorter"]
         for base in files:
             full = os.path.join(root, base)
             low = base.lower()
@@ -163,49 +164,49 @@ def _scan_dir(path: str, bucket: dict, records: list, progress):
                     pass
                 continue
 
-            m = NAME_RE.match(base)
-            ext = (m.group("ext") if m else base.rsplit(".", 1)[-1]).lower()
+            match = NAME_RE.match(base)
+            ext = (match.group("ext") if match else base.rsplit(".", 1)[-1]).lower()
             if ext not in MEDIA_EXT:
                 continue
             try:
-                st = os.stat(full)
+                stat = os.stat(full)
             except OSError:
                 continue
-            # unzip a réécrit le mtime UTC du zip comme heure locale : on inverse.
-            naive = datetime.fromtimestamp(st.st_mtime)
+            # unzip rewrote the zip's UTC mtime as local time: undo that.
+            naive = datetime.fromtimestamp(stat.st_mtime)
             ts = naive.replace(tzinfo=timezone.utc).timestamp()
 
-            if m:
-                key = f"{m.group('date')}_{m.group('uid')}"
-                part = m.group("part")
+            if match:
+                key = f"{match.group('date')}_{match.group('uid')}"
+                part = match.group("part")
             else:
                 key, part = base.rsplit(".", 1)[0], "main"
             if part == "thumbnail":
                 continue
             _add(bucket, key, part, {
                 "src": "file", "container": "", "entry": full,
-                "ext": ext, "size": st.st_size, "ts": ts,
+                "ext": ext, "size": stat.st_size, "ts": ts,
             })
             progress["files"] += 1
 
 
 def _attach_metadata(items: list, records: list):
-    """Rattache les entrées de memories_history.json aux fichiers.
+    """Match memories_history.json entries to the media files.
 
-    Le lien se fait sur l'horodatage UTC exact (identique des deux côtés à la
-    seconde près, à la granularité 2 s du format zip). En cas d'égalité on
-    départage par type de média puis par ordre stable.
+    The link is the exact UTC timestamp, identical on both sides down to the
+    zip format's two-second granularity. Ties are broken by media type, then by
+    a stable order.
     """
     if not records:
         return 0
 
     by_ts = defaultdict(list)
-    for r in records:
+    for record in records:
         try:
-            dt = datetime.strptime(r.get("Date", ""), "%Y-%m-%d %H:%M:%S UTC")
+            when = datetime.strptime(record.get("Date", ""), "%Y-%m-%d %H:%M:%S UTC")
         except ValueError:
             continue
-        by_ts[int(dt.replace(tzinfo=timezone.utc).timestamp()) // 2].append(r)
+        by_ts[int(when.replace(tzinfo=timezone.utc).timestamp()) // 2].append(record)
 
     matched = 0
     for item in sorted(items, key=lambda i: (i["ts"], i["id"])):
@@ -217,9 +218,9 @@ def _attach_metadata(items: list, records: list):
         pick = next((r for r in pool if r.get("Media Type") == want), pool[0])
         pool.remove(pick)
 
-        mloc = LOC_RE.search(pick.get("Location", "") or "")
-        if mloc:
-            lat, lon = float(mloc.group(1)), float(mloc.group(2))
+        location = LOC_RE.search(pick.get("Location", "") or "")
+        if location:
+            lat, lon = float(location.group(1)), float(location.group(2))
             if abs(lat) > 0.0001 or abs(lon) > 0.0001:
                 item["lat"], item["lon"] = lat, lon
         matched += 1
@@ -227,10 +228,10 @@ def _attach_metadata(items: list, records: list):
 
 
 def expand_sources(sources) -> list[str]:
-    """Développe les sources : un dossier contenant des archives d'export les remplace.
+    """Expand sources: a folder holding export archives is replaced by them.
 
-    Choisir « le dossier qui contient mes zips » est le geste le plus naturel :
-    on ne veut pas obliger à cocher les douze archives une par une.
+    Picking "the folder that holds my zips" is the natural gesture: nobody
+    should have to tick twelve archives one by one.
     """
     out: list[str] = []
     for src in sources:
@@ -243,24 +244,23 @@ def expand_sources(sources) -> list[str]:
                 )
             except OSError:
                 inner = []
-            zips = [p for p in inner if looks_like_export_zip(p)]
-            out.extend(zips)
-            # on garde aussi le dossier : il peut contenir des médias en vrac
+            out.extend(p for p in inner if looks_like_export_zip(p))
+            # keep the folder too: it may hold loose media
             out.append(src)
         else:
             out.append(src)
     seen, unique = set(), []
-    for p in out:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
+    for path in out:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
     return unique
 
 
 def scan(sources, progress=None) -> dict:
-    """Construit l'index. `progress` est un dict mis à jour en place."""
+    """Build the index. `progress` is a dict updated in place."""
     progress = progress if progress is not None else {}
-    progress.update({"files": 0, "items": 0, "step": "lecture", "current": "", "done": False})
+    progress.update({"files": 0, "items": 0, "step": "reading", "current": "", "done": False})
 
     bucket: dict = {}
     records: list = []
@@ -271,7 +271,7 @@ def scan(sources, progress=None) -> dict:
         elif zipfile.is_zipfile(src):
             _scan_zip(src, bucket, records, progress)
 
-    progress["step"] = "indexation"
+    progress["step"] = "indexing"
     items = []
     for key, parts in bucket.items():
         main = parts.get("main") or parts.get("overlay")
@@ -293,13 +293,13 @@ def scan(sources, progress=None) -> dict:
             "lon": None,
         })
 
-    progress["step"] = "métadonnées"
+    progress["step"] = "metadata"
     matched = _attach_metadata(items, records)
 
     items.sort(key=lambda i: (i["ts"], i["id"]))
     progress.update({
         "items": len(items),
-        "step": "terminé",
+        "step": "done",
         "done": True,
         "matched": matched,
     })

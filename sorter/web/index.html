@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Snapchat Memories Sorter</title>
+<meta name="description" content="Sort your Snapchat memories at the speed of a swipe. Runs entirely on your machine.">
+<link rel="stylesheet" href="/css/main.css">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+</head>
+<body>
+
+<!-- ══════════════════════════ HOME ══════════════════════════ -->
+<section id="home" class="screen active">
+  <div class="split">
+    <div class="split-left">
+      <img class="hero-logo" src="/logo.svg" alt="" width="100" height="100">
+      <h1>Snapchat<br>Memories Sorter</h1>
+      <p class="lead">
+        Snapchat wants you to pay to keep your memories.
+        Take them back — one swipe at a time.
+      </p>
+      <p class="dim tiny">Everything stays on your machine. Your archives are never touched.</p>
+    </div>
+
+    <div class="split-right">
+      <button class="way primary hidden" id="home-continue">
+        <span class="way-icon">↺</span>
+        <span class="way-body">
+          <b>Resume my session</b>
+          <small id="home-resume-info"></small>
+          <span class="meter"><i id="home-meter"></i></span>
+        </span>
+        <span class="way-go">→</span>
+      </button>
+
+      <button class="way" id="home-new">
+        <span class="way-icon">✦</span>
+        <span class="way-body">
+          <b>New session</b>
+          <small id="home-new-sub">Pick your export and start sorting</small>
+        </span>
+        <span class="way-go">→</span>
+      </button>
+
+      <button class="way" id="home-about">
+        <span class="way-icon">?</span>
+        <span class="way-body">
+          <b>About</b>
+          <small>What it does, and who made it</small>
+        </span>
+        <span class="way-go">→</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ WIZARD ══════════════════════════ -->
+<section id="setup" class="screen">
+  <div class="setup-wrap">
+    <header class="brand">
+      <img class="logo" src="/logo.svg" alt="" width="60" height="60">
+      <div>
+        <h1>New session</h1>
+        <p>Three steps, then you start sorting.</p>
+      </div>
+      <button class="btn ghost" id="setup-back">← Home</button>
+    </header>
+
+    <div id="resume-card" class="resume hidden">
+      <div>
+        <strong>Session in progress</strong>
+        <span id="resume-info" class="dim"></span>
+      </div>
+      <button class="btn primary" id="resume-btn">Resume</button>
+    </div>
+
+    <ol class="steps">
+      <!-- Step 1 — source -->
+      <li class="step" data-step="1">
+        <div class="step-head">
+          <span class="num">1</span>
+          <div>
+            <h2>Where are your memories?</h2>
+            <p class="dim">The <code>mydata~….zip</code> archives from your Snapchat export, or a folder you already extracted. They are never modified.</p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div id="suggestions" class="suggestions"></div>
+          <div class="row">
+            <button class="btn ghost" id="pick-source">Browse…</button>
+            <span id="source-summary" class="dim">No source selected</span>
+          </div>
+          <div id="source-chips" class="chips"></div>
+        </div>
+      </li>
+
+      <!-- Step 2 — destination -->
+      <li class="step" data-step="2">
+        <div class="step-head">
+          <span class="num">2</span>
+          <div>
+            <h2>Where should the keepers go?</h2>
+            <p class="dim">An empty folder, ideally. This is where your sorted folders will be created.</p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="row">
+            <button class="btn ghost" id="pick-dest">Choose folder…</button>
+            <span id="dest-summary" class="dim">No destination</span>
+          </div>
+          <div id="dest-warn" class="warn hidden"></div>
+        </div>
+      </li>
+
+      <!-- Step 3 — settings -->
+      <li class="step" data-step="3">
+        <div class="step-head">
+          <span class="num">3</span>
+          <div>
+            <h2>Settings</h2>
+            <p class="dim">The defaults are right 99% of the time.</p>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="opts">
+            <label class="opt">
+              <span>Organise into</span>
+              <select id="opt-layout">
+                <option value="year" selected>One sub-folder per year</option>
+                <option value="year-month">Year, then month</option>
+                <option value="flat">All in one folder</option>
+              </select>
+            </label>
+            <label class="opt">
+              <span>Sort order</span>
+              <select id="opt-order">
+                <option value="oldest" selected>Oldest first</option>
+                <option value="newest">Newest first</option>
+                <option value="random">Random</option>
+              </select>
+            </label>
+            <label class="opt">
+              <span>File names</span>
+              <select id="opt-naming">
+                <option value="date" selected>2019-07-14_18h32m07s (readable)</option>
+                <option value="original">Original Snapchat name</option>
+              </select>
+            </label>
+            <label class="opt">
+              <span>“Discard” means</span>
+              <select id="opt-trash">
+                <option value="ignore" selected>Copy nothing (recommended)</option>
+                <option value="collect">Copy into _Trash</option>
+              </select>
+            </label>
+            <label class="opt check">
+              <input type="checkbox" id="opt-overlay" checked>
+              <span>Also copy the overlays (text, drawings, filters)</span>
+            </label>
+            <label class="opt check">
+              <input type="checkbox" id="opt-metadata" checked>
+              <span>Write the date and place into the copied files
+                <small>Exif for photos, QuickTime for videos, so Photos files them on the
+                  right day and puts them on the map. Your archives are not touched.</small></span>
+            </label>
+            <label class="opt check">
+              <input type="checkbox" id="opt-autojoin">
+              <span>Join split videos automatically
+                <small>When a clip starts exactly where the previous video ended, append it
+                  without asking. Snapchat records no such marker, so this is a judgement
+                  call — leave it off to confirm each one with J.</small></span>
+            </label>
+          </div>
+        </div>
+      </li>
+    </ol>
+
+    <div class="cta">
+      <button class="btn primary big" id="start-btn" disabled>Scan and start</button>
+      <p class="dim tiny">Everything happens locally on your machine. No data is sent anywhere.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ SCAN ══════════════════════════ -->
+<section id="scanning" class="screen">
+  <div class="center">
+    <div class="pulse">✦</div>
+    <h2 id="scan-step">Reading the archives…</h2>
+    <p class="dim" id="scan-detail">Nothing is being extracted — we only read the catalogue.</p>
+    <div class="scanbar"><i></i></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ SORTING ══════════════════════════ -->
+<section id="sorter" class="screen">
+  <header class="topbar">
+    <div class="progress">
+      <div class="pbar"><i id="pbar-fill"></i></div>
+      <div class="pmeta">
+        <span id="p-count">0 / 0</span>
+        <span class="dot">·</span>
+        <span id="p-left" class="dim">0 left</span>
+        <span id="p-pending" class="dim"></span>
+      </div>
+    </div>
+    <div class="topactions">
+      <button class="icon" id="btn-undo" title="Undo (Backspace)">↺</button>
+      <button class="icon" id="btn-sound" title="Sound on (M)">🔊</button>
+      <button class="icon" id="btn-help" title="Help (?)">?</button>
+      <button class="icon" id="btn-finish" title="Finish">✓</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="hint left">discard</div>
+    <div class="hint right">keep</div>
+    <div class="hint up">favourite</div>
+    <div id="cards"></div>
+    <div id="empty" class="center hidden">
+      <h2>All sorted 🎉</h2>
+      <button class="btn primary" id="btn-finish2">See the summary</button>
+    </div>
+  </main>
+
+  <aside class="info" id="info"></aside>
+
+  <footer class="dock">
+    <div id="join-banner" class="join-banner hidden">
+      <span>This clip starts exactly where the previous video ended.</span>
+      <button class="btn primary" id="join-now">Join it on <kbd>J</kbd></button>
+    </div>
+    <div class="actions">
+      <button class="act trash" data-action="trash"><b>←</b><span>Discard</span></button>
+      <button class="act skip" data-action="skip"><b>↓</b><span>Skip</span></button>
+      <button class="act fav" data-action="fav"><b>↑</b><span>Favourite</span></button>
+      <button class="act keep" data-action="keep"><b>→</b><span>Keep</span></button>
+      <button class="act join" id="btn-join" disabled
+              title="Append this clip to the end of the previous video (J)">
+        <b>⇤</b><span>Join to previous</span></button>
+    </div>
+    <div class="folders" id="folders"></div>
+  </footer>
+</section>
+
+<!-- ══════════════════════════ SUMMARY ══════════════════════════ -->
+<section id="done" class="screen">
+  <div class="setup-wrap">
+    <header class="brand">
+      <img class="logo" src="/logo.svg" alt="" width="60" height="60">
+      <div><h1>Sorting complete</h1><p id="done-sub"></p></div>
+    </header>
+    <div id="done-stats" class="donestats"></div>
+    <pre id="done-report" class="report"></pre>
+    <div class="cta row">
+      <button class="btn primary" id="btn-open-dest">Open the folder</button>
+      <button class="btn ghost" id="btn-replay">Review skipped</button>
+      <button class="btn ghost" id="btn-back">Back to sorting</button>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ MODALS ══════════════════════════ -->
+<div id="browser" class="modal hidden">
+  <div class="sheet">
+    <header>
+      <h3 id="browser-title">Choose</h3>
+      <button class="icon" data-close>✕</button>
+    </header>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="listing" id="listing"></div>
+    <footer>
+      <button class="btn ghost" id="new-folder-btn">＋ New folder</button>
+      <div class="grow"></div>
+      <span id="browser-hint" class="dim tiny"></span>
+      <button class="btn primary" id="browser-ok">Confirm</button>
+    </footer>
+  </div>
+</div>
+
+<div id="prompt" class="modal hidden">
+  <div class="sheet small">
+    <header><h3 id="prompt-title">New folder</h3><button class="icon" data-close>✕</button></header>
+    <div class="pad">
+      <input id="prompt-input" type="text" placeholder="Holidays, Family, Best of…" autocomplete="off">
+      <div class="keyrow" id="prompt-keys"></div>
+      <p class="dim tiny">The key you pick sends the memory on screen to this folder, in one press.</p>
+    </div>
+    <footer><div class="grow"></div><button class="btn primary" id="prompt-ok">Create</button></footer>
+  </div>
+</div>
+
+<div id="help" class="modal hidden">
+  <div class="sheet small">
+    <header><h3>Shortcuts</h3><button class="icon" data-close>✕</button></header>
+    <div class="pad keys">
+      <div><kbd>←</kbd><span>Discard</span></div>
+      <div><kbd>→</kbd><span>Keep</span></div>
+      <div><kbd>↑</kbd><span>Favourite</span></div>
+      <div><kbd>↓</kbd><span>Skip (decide later)</span></div>
+      <div><kbd>J</kbd><span>Join this clip onto the <b>end of the previous</b> video</span></div>
+      <div><kbd>1</kbd>…<kbd>0</kbd><span>Send to the matching folder</span></div>
+      <div><kbd>N</kbd><span>New folder</span></div>
+      <div><kbd>⌫</kbd><span>Undo the last decision</span></div>
+      <div><kbd>Space</kbd><span>Play / pause the video</span></div>
+      <div><kbd>M</kbd><span>Mute or unmute</span></div>
+      <div><kbd>C</kbd><span>Show or hide the overlays</span></div>
+      <div><kbd>?</kbd><span>This help</span></div>
+    </div>
+    <div class="pad"><p class="dim tiny">You can also drag the card with a mouse or trackpad.</p></div>
+  </div>
+</div>
+
+<div id="about" class="modal hidden">
+  <div class="sheet small">
+    <header><h3>About</h3><button class="icon" data-close>✕</button></header>
+    <div class="pad about-body">
+      <p>A local web app that sorts the memories of a Snapchat data export, one
+        swipe at a time. It reads the archives without unpacking them, writes the
+        date and place into what you keep, and can glue split videos back
+        together.</p>
+      <p><b>Nothing leaves your machine.</b> No account, no telemetry, no network
+        call — and your source archives are never modified.</p>
+      <dl class="meta-list">
+        <div><dt>Built by</dt><dd>Ilian Azz</dd></div>
+        <div><dt>Site</dt><dd><a href="https://ilianazz.com" target="_blank" rel="noreferrer">ilianazz.com</a></dd></div>
+        <div><dt>GitHub</dt><dd><a href="https://github.com/ilianAZZ" target="_blank" rel="noreferrer">@ilianAZZ</a></dd></div>
+        <div><dt>Medium</dt><dd><a href="https://medium.com/@ilianazz" target="_blank" rel="noreferrer">@ilianazz</a></dd></div>
+        <div><dt>Source</dt><dd><a href="https://github.com/ilianAZZ/snapchat-memories-sorter" target="_blank" rel="noreferrer">snapchat-memories-sorter</a></dd></div>
+        <div><dt>Licence</dt><dd>MIT · <span id="about-version">v1.0.0</span></dd></div>
+      </dl>
+      <p class="dim tiny">An independent project, unaffiliated with Snap Inc.</p>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

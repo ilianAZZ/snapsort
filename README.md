@@ -1,202 +1,338 @@
 <div align="center">
 
-# ✦ SnapSort
+<img src="sorter/web/logo.svg" width="88" height="88" alt="">
 
-**Trie des milliers de souvenirs Snapchat à la vitesse d'un swipe.**
+# Snapchat Memories Sorter
 
-Un souvenir à l'écran, une touche, le suivant s'affiche. Gauche pour jeter,
-droite pour garder, haut pour les favoris, un chiffre pour ranger dans un dossier.
-C'est tout.
+**Get your Snapchat memories out — and keep only the ones worth keeping.**
 
-*Aucune dépendance · aucun compte · rien ne quitte ta machine.*
+One memory on screen, one key, the next one appears. Left to bin, right to keep,
+up for favourites, a digit to file it away. That's the whole interface.
+
+*No dependencies · no account · nothing leaves your machine.*
 
 </div>
 
 ---
 
-## Pourquoi
+## Why this exists
 
-Quand on demande ses données à Snapchat, on reçoit une dizaine d'archives ZIP de
-2 Go chacune, avec des milliers de fichiers nommés
-`2019-07-14_a3f9c1d2-…-main.mp4`. Impossible de savoir ce qu'on garde sans tout
-décompresser, et le Finder n'aide pas à trier 6 000 vidéos.
+Snapchat put a cap on Memories storage. Past the free limit you get the same
+message everyone got: subscribe, or your memories go away. Years of your life,
+held hostage behind a monthly fee.
 
-SnapSort lit les archives **sans les décompresser**, affiche chaque souvenir en
-plein écran et n'attend de toi qu'un seul geste par souvenir. Ce que tu gardes
-est copié dans un dossier propre, daté et organisé.
+So you ask for your data. What arrives is a dozen ZIP archives of 2 GB each,
+with thousands of files named `2019-07-14_a3f9c1d2-…-main.mp4`, no previews, no
+dates you can read, and a `memories_history.json` that never mentions a single
+file name. Opening it in the Finder tells you nothing. Deciding what to keep out
+of six thousand videos is, in practice, impossible.
 
-## Aperçu
+Snapchat Memories Sorter reads those archives **without extracting them**, shows you one memory
+at a time full screen, and asks for exactly one gesture each. What you keep is
+copied into a clean, dated, organised folder — with the date and the place
+written into the files themselves, so Photos files them correctly instead of
+dumping everything on today's date.
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ ████████████░░░░░░░░░░░░  1 284 / 5 879 · reste 4 595   ↺ ? ✓│
-├──────────────────────────────────────────────────────────────┤
-│                                          ┌─────────────────┐ │
-│                ┌──────────────┐          │ Samedi 14 juil. │ │
-│                │              │          │ 2019            │ │
-│                │   ▶ vidéo    │          │ Heure    18:32  │ │
-│                │              │          │ Durée     0:09  │ │
-│  SUPPRIMER     │   9 s · HD   │  GARDER  │ Défin. 1080×1920│ │
-│                │              │          │ Poids   4,2 Mo  │ │
-│                │              │          │ 📍 48.85, 2.35  │ │
-│                └──────────────┘          └─────────────────┘ │
-├──────────────────────────────────────────────────────────────┤
-│      ← Supprimer   ↓ Passer   ↑ Favori   → Garder            │
-│   ① Vacances 34   ② Famille 12   ③ Best of 5   ＋ Nouveau     │
-└──────────────────────────────────────────────────────────────┘
-```
+Then you delete the archives yourself, and you own your memories again.
 
-## Installation
+## What it looks like
 
-Il n'y a rien à installer. Juste **Python 3.9 ou plus récent**, déjà présent sur
-macOS et Linux ([python.org](https://www.python.org/downloads/) sous Windows).
+<div align="center">
+<img src="docs/screenshot-sorting.png" width="820" alt="The sorting screen: one memory full screen, its date, time and location, and the action bar">
+<br><br>
+<img src="docs/screenshot-home.png" width="700" alt="The landing page: resume a session or start a new one, with an overview of what the app does">
+<br><br>
+<img src="docs/screenshot-setup.png" width="640" alt="The three-step wizard: sources, destination, settings">
+<br>
+<sub>Screenshots use a generated demo export — no real memories were harmed.</sub>
+</div>
+
+## Getting started
+
+Three ways in. All of them end up on <http://127.0.0.1:8765>, and none of them
+touch your archives.
+
+### 1 · Docker Compose — nothing to clone, nothing to install
+
+Save [`docker-compose.yml`](docker-compose.yml) into an empty folder, drop your
+`mydata~*.zip` archives into `./export` next to it, then:
 
 ```bash
-git clone https://github.com/<toi>/snapsort.git
-cd snapsort
-python3 snapsort.py
+docker compose up
 ```
 
-Le navigateur s'ouvre sur `http://127.0.0.1:8765`. Zéro dépendance à installer :
-tout est écrit avec la bibliothèque standard de Python.
+Open <http://127.0.0.1:8765>, pick `/data` as the source and `/out` as the
+destination. Your sorted memories appear in `./sorted`.
 
-## Comment obtenir ses souvenirs Snapchat
+```yaml
+services:
+  sorter:
+    image: ghcr.io/ilianazz/snapchat-memories-sorter:latest
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./export:/data:ro     # your archives, read-only
+      - ./sorted:/out         # the result
+```
 
-1. Va sur [accounts.snapchat.com](https://accounts.snapchat.com) → **Mes données**
-2. Demande ton export en cochant **« Inclure les fichiers de mes souvenirs »**
-3. Snapchat envoie un mail avec des liens (compte quelques heures à quelques jours)
-4. Télécharge **toutes** les archives `mydata~….zip` dans un même dossier
-5. Lance SnapSort : il les détecte tout seul
+Mounting the source **read-only** (`:ro`) means the operating system itself
+guarantees Snapchat Memories Sorter cannot modify your archives, whatever it does.
 
-> Les liens de téléchargement expirent au bout de 7 jours. Récupère tout d'un coup.
+### 2 · A single `docker run`
 
-## Utilisation
+```bash
+docker run --rm \
+  -p 127.0.0.1:8765:8765 \
+  -v "$HOME/Downloads:/data:ro" \
+  -v "$HOME/SortedMemories:/out" \
+  ghcr.io/ilianazz/snapchat-memories-sorter
+```
 
-### 1 · L'assistant (3 étapes)
+Useful extras:
 
-SnapSort cherche les archives dans ton Bureau, tes Téléchargements et tes
-Documents, et te les propose en un clic. Sinon, « Parcourir » te laisse choisir
-un dossier ou cocher les archives à la main.
+```bash
+docker pull ghcr.io/ilianazz/snapchat-memories-sorter         # get the latest build
+docker run … ghcr.io/ilianazz/snapchat-memories-sorter:v1     # pin a released version
+docker logs -f sorter                       # follow what it is doing
+```
 
-Tu choisis ensuite un **dossier de destination** — un dossier vide, ailleurs que
-dans tes archives — puis tu valides. L'analyse des 22 Go prend moins d'une
-seconde : SnapSort ne lit que le catalogue des archives.
+The image is built for `linux/amd64` and `linux/arm64`, and republished
+automatically on every push to `main`.
 
-### 2 · Le tri
+### 3 · With Python, from a clone
 
-| Touche | Action |
+You need **Python 3.9 or newer**, already present on macOS and Linux
+([python.org](https://www.python.org/downloads/) on Windows).
+
+```bash
+git clone https://github.com/ilianAZZ/snapchat-memories-sorter.git
+cd sorter
+python3 sorter.py
+```
+
+There is nothing to install: everything is written against the Python standard
+library. The browser opens on its own.
+
+```bash
+python3 sorter.py --port 9000 --no-browser   # somewhere else, no browser
+python3 sorter.py --dest ~/MyMemories        # jump straight back into a session
+```
+
+## Getting your memories out of Snapchat
+
+1. Go to [accounts.snapchat.com](https://accounts.snapchat.com) → **My Data**
+2. Request your export, ticking **“Include your Memories files”**
+3. Snapchat emails you links (anywhere from a few hours to a few days)
+4. Download **all** the `mydata~….zip` archives into one folder
+5. Start Snapchat Memories Sorter — it finds them on its own
+
+> The download links expire after 7 days. Grab everything in one go.
+
+## Sorting
+
+| Key | Action |
 | :---: | --- |
-| <kbd>←</kbd> | **Supprimer** — ne rien conserver |
-| <kbd>→</kbd> | **Garder** — copié dans `Gardés/` |
-| <kbd>↑</kbd> | **Favori** — copié dans `Favoris/` |
-| <kbd>↓</kbd> | **Passer** — décider plus tard |
-| <kbd>1</kbd>…<kbd>0</kbd> | Ranger dans le dossier associé à ce chiffre |
-| <kbd>N</kbd> | Créer un dossier (une touche libre lui est attribuée) |
-| <kbd>⌫</kbd> | Annuler la dernière décision |
-| <kbd>Espace</kbd> | Lecture / pause · <kbd>M</kbd> son · <kbd>C</kbd> calques |
-| <kbd>?</kbd> | Rappel des raccourcis |
+| <kbd>←</kbd> | **Discard** — keep nothing |
+| <kbd>→</kbd> | **Keep** — copied into `Kept/` |
+| <kbd>↑</kbd> | **Favourite** — copied into `Favorites/` |
+| <kbd>↓</kbd> | **Skip** — decide later |
+| <kbd>J</kbd> | **Join** — append this clip to the previous video |
+| <kbd>1</kbd>…<kbd>0</kbd> | File into the folder bound to that digit |
+| <kbd>N</kbd> | New folder (a free key is assigned to it) |
+| <kbd>⌫</kbd> | Undo the last decision |
+| <kbd>Space</kbd> | Play / pause · <kbd>M</kbd> sound · <kbd>C</kbd> overlays |
+| <kbd>?</kbd> | Shortcut reminder |
 
-Tu peux aussi **faire glisser la carte** à la souris ou au trackpad.
+You can also **drag the card** with a mouse or trackpad.
 
-Le souvenir suivant est déjà préchargé : l'enchaînement est instantané. Les
-copies se font en arrière-plan, tu ne les attends jamais.
+The next memory is already loaded, so there is no wait between decisions. Copies
+happen in the background — you never wait for one.
 
-**Créer un dossier** prend deux secondes : <kbd>N</kbd>, tu tapes « Vacances »,
-la touche <kbd>1</kbd> lui est attribuée automatiquement. Ensuite un appui sur
-<kbd>1</kbd> y envoie le souvenir affiché. Clic droit sur un dossier pour le
-renommer ou changer sa touche.
+**Creating a folder** takes two seconds: <kbd>N</kbd>, type "Holidays", and key
+<kbd>1</kbd> is bound to it. From then on, pressing <kbd>1</kbd> sends the memory
+on screen there. Right-click a folder to rename it or change its key.
 
-### 3 · Le résultat
+### Putting split videos back together
+
+Snapchat caps a single recording at ten seconds, so a longer video comes back as
+several consecutive memories, one after the other.
+
+Sorting runs **oldest first**, so you meet the beginning of the recording first.
+Keep it as usual, then press <kbd>J</kbd> on each following clip: **Join to
+previous** appends it to the end of the video you just kept. Segment 2 goes onto
+segment 1, segment 3 onto that, and so on — you always join *backwards*, onto
+what is already filed.
 
 ```text
-MesSouvenirs/
-├── Gardés/2019/2019-07-14_18h32m07s_a3f9c1.mp4
-├── Favoris/2020/2020-08-17_22h45m44s_7bd104.jpg
-├── Vacances/2021/…
-├── RAPPORT.md            ← résumé du tri
-└── .snapsort/            ← état de la session (supprimable)
+  clip 1        clip 2        clip 3
+ (00:00)       (00:10)       (00:20)
+    │             │             │
+  → Keep         J             J          →   one 25-second video
 ```
 
-Les fichiers sont renommés lisiblement et **datés à la date du souvenir**, pas à
-celle de la copie : ils s'affichent dans le bon ordre dans le Finder et
-s'importent correctement dans Photos.
+Nothing is re-encoded: the audio and video streams are copied across verbatim,
+so there is no quality loss, no waiting, and no ffmpeg to install. Undo works
+too — the video is rebuilt with one segment fewer.
 
-## Ce que SnapSort ne fait pas
+**How it knows.** Nothing in the export says "this is part 2 of 3" — Snapchat
+ships only a date, a media type and a location, with no series marker of any
+kind. So Snapchat Memories Sorter works it out from the timing: when a clip starts exactly where
+the previous video ended, it says so and the Join button lights up. Turn on
+*Join split videos automatically* in the settings and it does it without asking.
+It is left off by default because it is a deduction, not a fact.
 
-- **Il ne modifie ni ne supprime jamais tes archives source.** « Supprimer »
-  veut simplement dire « ne pas copier ». Quand tu as fini, tu supprimes les ZIP
-  toi-même — tu gardes la main.
-- Il n'envoie rien sur Internet. Le serveur n'écoute que sur `127.0.0.1`. Le seul
-  lien sortant est celui d'OpenStreetMap, si tu cliques sur les coordonnées GPS.
-- Il ne « grave » pas les calques dans l'image. Les textes et dessins Snapchat
-  sont dans des fichiers `-overlay.png` séparés : ils sont affichés par-dessus le
-  média pendant le tri, et copiés à côté (`…-calque.png`) si tu gardes le souvenir.
+On a real export, roughly one video in five is a continuation of the one before
+it.
 
-## Reprendre plus tard
+## What you get
 
-Ferme la fenêtre quand tu veux. Au prochain lancement, SnapSort propose de
-reprendre là où tu t'étais arrêté. Les souvenirs déjà triés ne réapparaissent
-jamais, même après une annulation.
+```text
+MyMemories/
+├── Kept/2019/2019-07-14_18h32m07s_a3f9c1.mp4
+├── Favorites/2020/2020-08-17_22h45m44s_7bd104.jpg
+├── Holidays/2021/…
+├── REPORT.md              ← summary of the sort
+└── .sorter/             ← session state (safe to delete)
+```
 
-Les souvenirs « passés » sont récupérables : à la fin du tri, le bouton
-**« Revoir les passés »** les remet en file.
+Files come out readably named and **dated to the memory itself**, not to the
+copy: they show up in the right order in the Finder and import correctly into
+Photos.
 
-## Options
+### The date and place are written into the files
 
-| Réglage | Par défaut | Autres valeurs |
+Snapchat ships the date and GPS coordinates in a separate JSON file; the media
+themselves carry nothing. Snapchat Memories Sorter writes that information **into the copies**,
+so it travels with the file:
+
+| Format | What gets written |
+| --- | --- |
+| `.jpg` | Exif `DateTimeOriginal` + UTC offset, `GPSLatitude` / `GPSLongitude` |
+| `.png` (overlays) | an `eXIf` chunk, same contents |
+| `.mp4` | `mvhd`/`tkhd`/`mdhd` dates, `©day` and `©xyz`, and the `com.apple.quicktime.*` keys Photos reads |
+
+A photo from 2017 imported into Photos therefore lands in 2017 and appears on
+the map, instead of on the day you imported it. Your source archives are not
+touched — the writing happens on the copy, in the destination folder. Switch it
+off in the settings if you would rather not.
+
+## What Snapchat Memories Sorter does not do
+
+- **It never modifies or deletes your source archives.** "Discard" simply means
+  "don't copy". When you are done, you delete the ZIPs yourself — you stay in
+  control.
+- It sends nothing anywhere. The server listens on `127.0.0.1` only. The one
+  outbound link is OpenStreetMap, if you click on the GPS coordinates.
+- It does not burn the overlays into the image. Snapchat's text and drawings
+  live in separate `-overlay.png` files: they are shown on top of the media
+  while sorting, and copied alongside it (`…-overlay.png`) if you keep it.
+
+## Stopping and picking up later
+
+Sorting six thousand memories is not a single sitting, so nothing about it is
+fragile. Close the window whenever you like: the landing page offers **Resume my
+session** next time, with your progress on it.
+
+Every decision is appended to a journal the instant you make it, before anything
+else happens. The larger state file is written at most once a second, and the
+journal is replayed on the next start to cover whatever it had not caught up
+with yet. Your folders, their shortcut keys, their counters, the cursor and the
+files already copied all come back.
+
+These are actually tested, on a real export:
+
+| What happened | Result |
+| --- | --- |
+| Closed the window, came back later | Resumes where you left off |
+| Quit the terminal / `kill` (SIGTERM) | Clean shutdown, nothing lost |
+| Hard crash or power cut (`kill -9`) | The 4 decisions not yet written were replayed on restart |
+| Crash *during* a video join | The join was replayed and the video came out correct |
+| Crash in the middle of a copy | The half-written file is discarded and copied again |
+
+Sorted memories never come back into the queue, even after an undo. Skipped ones
+are recoverable: at the end of the sort, **“Review skipped”** puts them back.
+
+Deleting the `.sorter/` folder resets the sort without touching anything you
+have already filed.
+
+## Settings
+
+| Setting | Default | Alternatives |
 | --- | --- | --- |
-| Organisation | un sous-dossier par année | année + mois, ou tout à plat |
-| Ordre de tri | du plus ancien au plus récent | du plus récent, ou aléatoire |
-| Nom des fichiers | `2019-07-14_18h32m07s_a3f9c1` | nom Snapchat d'origine |
-| « Supprimer » signifie | ne rien copier | copier dans `_Corbeille/` |
-| Calques | copiés à côté du média | ignorés |
+| Organise into | one sub-folder per year | year + month, or all flat |
+| Sort order | oldest first | newest first, or random |
+| File names | `2019-07-14_18h32m07s_a3f9c1` | original Snapchat name |
+| “Discard” means | copy nothing | copy into `_Trash/` |
+| Overlays | copied next to the media | ignored |
+| Date and place written in | yes (Exif / QuickTime) | no |
+| Join split videos automatically | no (confirm each with <kbd>J</kbd>) | yes |
 
-## En ligne de commande
+## Command line
 
 ```bash
-python3 snapsort.py                              # assistant graphique
-python3 snapsort.py --source ~/Desktop/snap --dest ~/MesSouvenirs
-python3 snapsort.py --dest ~/MesSouvenirs        # reprend une session
-python3 snapsort.py --port 9000 --no-browser
+python3 sorter.py                              # graphical wizard
+python3 sorter.py --source ~/Desktop/snap --dest ~/MyMemories
+python3 sorter.py --dest ~/MyMemories          # resume a session
+python3 sorter.py --port 9000 --no-browser
 ```
 
-`--source` accepte un dossier d'archives, une archive précise (répétable) ou un
-export déjà décompressé.
+`--source` accepts a folder of archives, one specific archive (repeatable), or
+an already extracted export.
 
-## Détails techniques
+## Under the hood
 
 <details>
-<summary>Pour les curieux</summary>
+<summary>For the curious</summary>
 
-**Lecture des archives.** SnapSort ne lit que le *central directory* des ZIP :
-5 879 souvenirs répartis sur 22 Go sont indexés en 0,8 s. Chaque média est
-extrait au moment où il s'affiche (5 à 10 ms) vers un cache local purgé en LRU
-(3 Go par défaut). Les 22 Go ne sont jamais décompressés d'un bloc.
+**Reading the archives.** Snapchat Memories Sorter only reads the ZIP *central directory*: 5,879
+memories spread over 22 GB are indexed in 0.8 s. Each media file is extracted
+when it comes on screen (5–10 ms) into a local cache with LRU eviction (3 GB by
+default). The 22 GB are never extracted in one go.
 
-**Métadonnées.** `json/memories_history.json` liste la date UTC, le type et les
-coordonnées GPS de chaque souvenir, mais **sans nom de fichier**. SnapSort
-retrouve la correspondance par l'horodatage : la date de modification stockée
-dans le ZIP est exactement l'instant UTC du souvenir. Sur un export réel, 5 879
-entrées sur 5 880 sont rattachées.
+**Metadata.** `json/memories_history.json` lists the UTC date, the type and the
+GPS coordinates of every memory, but **no file name**. Snapchat Memories Sorter recovers the
+link through the timestamp: the modification date stored in the ZIP *is* the
+memory's UTC instant. On a real export, 5,879 entries out of 5,880 are matched.
 
-**Formats reconnus.** `YYYY-MM-DD_<uuid>-main.{jpg,mp4,…}` avec
-`-overlay.png` optionnel, plus n'importe quel média en vrac dans un dossier.
+**Writing metadata.** All done by hand, no dependency: a TIFF/Exif block in an
+`APP1` segment for JPEG, an `eXIf` chunk for PNG, QuickTime atoms for MP4. When
+a `free` box follows `moov` — the common case with Snapchat — the metadata is
+tucked into it and **not one byte of the stream moves**; otherwise the
+`stco`/`co64` offsets are shifted to match. The result is re-read before it is
+written: at the slightest doubt the file is copied untouched rather than
+damaged. Verified over 80 files from a real export, decoded stream identical bit
+for bit.
 
-**Persistance.** L'index (~3 Mo) est écrit une seule fois ; l'état du tri (petit)
-est écrit au maximum une fois par seconde, et à l'arrêt. Chaque action est aussi
-consignée dans `journal.jsonl`. Une décision par swipe coûte ~2 ms.
+**Joining videos.** Segments are concatenated by copying their samples and
+rebuilding the sample tables (`stts`, `stsc`, `stsz`, `stco`, `stss`, `ctts`).
+Files whose tracks disagree on codec configuration or timescale are refused
+rather than glued badly. Verified on real runs: identical packet counts and
+sizes, and a frame-by-frame identical decode — the only two audio frames that
+differ are the ones at the joins, where the AAC decoder no longer restarts cold.
 
-**Vidéos.** Servies avec support des requêtes HTTP `Range`, donc lecture et
-déplacement dans la timeline fonctionnent normalement.
+**Persistence.** The index (~3 MB) is written once; the sorting state (small) is
+written at most once per second, and on shutdown. Every action also goes into
+`journal.jsonl`. A decision costs a few milliseconds.
+
+**Video.** Served with HTTP `Range` support, so playback and seeking work
+normally. Videos start **with sound**; if the browser refuses (no interaction on
+the page yet), playback starts silent and the first click restores it.
+<kbd>M</kbd> remembers your choice between sessions.
+
+**Interface.** No framework, no build step: native ES modules (`web/js/`) and
+one stylesheet per area (`web/css/`), served as-is.
 
 </details>
 
-## Contribuer
+## Contributing
 
-Les idées et corrections sont bienvenues. [`CLAUDE.md`](CLAUDE.md) décrit
-l'architecture, les invariants à respecter et comment tester — utile que tu
-codes à la main ou avec un assistant.
+Ideas and fixes are welcome. [`CLAUDE.md`](CLAUDE.md) describes the
+architecture, the invariants to respect and how to test — useful whether you
+write the code yourself or with an assistant.
+
+`python3 tools/make_demo.py /tmp/demo` builds a fake export, handy for working
+on the interface without touching real memories.
 
 ## Licence
 
-[MIT](LICENSE). Projet indépendant, sans aucun lien avec Snap Inc.
+[MIT](LICENSE). An independent project, unaffiliated with Snap Inc.

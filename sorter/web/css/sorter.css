@@ -1,0 +1,215 @@
+/* ══════════════════════════════════════════════════════════════════
+   Sorting screen: top bar, cards, info panel, dock
+   ══════════════════════════════════════════════════════════════════ */
+
+.topbar {
+  display: flex; align-items: center; gap: 18px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.progress { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.pbar { height: 4px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.pbar i {
+  display: block; height: 100%; width: 0; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--keep));
+  transition: width .3s;
+}
+.pmeta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.dot { color: var(--line-2); }
+.topactions { display: flex; gap: 8px; }
+.icon.muted { color: var(--dim); }
+.icon.blocked { border-color: var(--fav); color: var(--fav); animation: flash .5s ease 3; }
+
+/* ─────────────────────────── stage / cards ─────────────────────────── */
+
+.stage { position: relative; overflow: hidden; display: grid; place-items: center; }
+#cards { position: absolute; inset: 0; }
+
+.card {
+  position: absolute; inset: 0;
+  margin: auto;
+  width: min(94%, 460px); height: min(88%, 780px);
+  border-radius: 26px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  display: grid; place-items: center;
+  will-change: transform, opacity;
+  touch-action: none;
+}
+.card .media { position: relative; width: 100%; height: 100%; }
+.card img.main, .card video.main, .card img.ov {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+}
+.card img.ov { pointer-events: none; }
+.card .blur {
+  position: absolute; inset: -20px;
+  background-size: cover; background-position: center;
+  filter: blur(38px) saturate(1.4) brightness(.5);
+  transform: scale(1.1);
+}
+.card.behind { transform: scale(.94) translateY(16px); opacity: .5; filter: brightness(.6); }
+.card.behind2 { transform: scale(.88) translateY(30px); opacity: .22; filter: brightness(.4); }
+.card.leaving { transition: transform .34s cubic-bezier(.2, .7, .3, 1), opacity .34s; }
+.card.settle { transition: transform .28s cubic-bezier(.2, .8, .3, 1), opacity .28s, filter .28s; }
+
+.stamp {
+  position: absolute; top: 26px; left: 50%;
+  transform: translateX(-50%) scale(.8);
+  padding: 8px 20px; border-radius: 12px;
+  font-weight: 800; font-size: 17px; letter-spacing: .1em; text-transform: uppercase;
+  opacity: 0; transition: opacity .12s, transform .12s;
+  border: 2.5px solid currentColor;
+  backdrop-filter: blur(8px);
+  z-index: 3;
+}
+.stamp.show { opacity: 1; transform: translateX(-50%) scale(1); }
+
+.badge-kind {
+  position: absolute; top: 14px; left: 14px; z-index: 2;
+  padding: 5px 10px; border-radius: 9px;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(10px);
+  font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* The browser refused sound until the page has been interacted with. */
+.sound-hint {
+  position: absolute; top: 14px; right: 14px; z-index: 3;
+  padding: 6px 11px; border-radius: 9px;
+  background: rgba(0, 0, 0, .6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 201, 60, .45);
+  color: var(--fav);
+  font-size: 11.5px; font-weight: 600;
+  cursor: pointer;
+}
+.sound-hint:hover { background: rgba(255, 201, 60, .18); }
+
+.vprog {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: rgba(255, 255, 255, .13); z-index: 2;
+}
+.vprog i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+.hint {
+  position: absolute; z-index: 1;
+  font-size: 12px; font-weight: 650; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--dim); opacity: .28; pointer-events: none;
+}
+.hint.left { left: 22px; top: 50%; transform: translateY(-50%) rotate(-90deg); }
+.hint.right { right: 22px; top: 50%; transform: translateY(-50%) rotate(90deg); }
+.hint.up { top: 14px; left: 50%; transform: translateX(-50%); }
+
+/* ─────────────────────────── info panel ─────────────────────────── */
+
+.info {
+  position: absolute; top: 76px; right: 22px; z-index: 4;
+  width: 230px;
+  padding: 15px 16px;
+  border-radius: 16px;
+  background: rgba(14, 14, 19, .72);
+  backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 11px;
+  font-size: 13px;
+  pointer-events: auto;
+}
+.info .date { font-size: 16px; font-weight: 620; letter-spacing: -.01em; }
+.info .meta { display: flex; flex-direction: column; gap: 6px; }
+.info .kv { display: flex; justify-content: space-between; gap: 12px; color: var(--dim); font-size: 12.5px; }
+.info .kv b { color: var(--txt); font-weight: 550; font-variant-numeric: tabular-nums; }
+.info a.gps {
+  display: flex; align-items: center; gap: 7px;
+  color: var(--keep); text-decoration: none; font-size: 12.5px;
+  padding: 8px 10px; border-radius: 10px;
+  background: rgba(46, 230, 168, .08);
+  border: 1px solid rgba(46, 230, 168, .2);
+}
+.info a.gps:hover { background: rgba(46, 230, 168, .15); }
+
+@media (max-width: 900px) {
+  .info {
+    position: static; width: auto; margin: 0 16px 8px;
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+  }
+  .hint { display: none; }
+  #sorter.active { grid-template-rows: auto 1fr auto auto; }
+}
+
+/* ─────────────────────────── dock ─────────────────────────── */
+
+.dock {
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 12px;
+  background: rgba(8, 8, 11, .5);
+}
+.actions { display: flex; gap: 10px; justify-content: center; }
+.act {
+  flex: 1; max-width: 168px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 11px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  transition: transform .12s, background .16s, border-color .16s;
+}
+.act:hover { background: var(--panel-2); }
+.act:active { transform: scale(.95); }
+.act b { font-size: 17px; line-height: 1; }
+.act span { font-size: 12px; color: var(--dim); }
+.act.trash:hover { border-color: var(--trash); } .act.trash b { color: var(--trash); }
+.act.keep:hover { border-color: var(--keep); } .act.keep b { color: var(--keep); }
+.act.fav:hover { border-color: var(--fav); } .act.fav b { color: var(--fav); }
+.act.skip:hover { border-color: var(--skip); } .act.skip b { color: var(--skip); }
+.act.join:hover:not(:disabled) { border-color: var(--join); }
+.act.join b { color: var(--join); }
+.act.join:disabled { opacity: .3; cursor: not-allowed; }
+/* Timing says this clip continues the previous video: nudge without shouting. */
+.act.join.likely { border-color: var(--join); background: rgba(125, 211, 252, .1); }
+.act.join.likely b { animation: flash 1.6s ease infinite; }
+
+/* Shown when the clip on screen starts exactly where the previous one ended. */
+.join-banner {
+  display: flex; align-items: center; gap: 14px; justify-content: center;
+  padding: 9px 14px; border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, .4);
+  background: rgba(125, 211, 252, .09);
+  font-size: 13.5px;
+}
+.join-banner kbd {
+  padding: 1px 6px; border-radius: 5px; font-size: 11.5px;
+  background: rgba(0, 0, 0, .3); border: 1px solid rgba(0, 0, 0, .3);
+}
+.join-banner .btn { padding: 6px 13px; font-size: 13px; }
+.brand .btn { margin-left: auto; }
+
+.folders { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center; }
+.folder {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 13px 7px 8px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer; font-size: 13px;
+  transition: transform .12s, background .15s, border-color .15s;
+}
+.folder:hover { background: var(--panel-2); }
+.folder:active { transform: scale(.95); }
+.folder .k {
+  width: 21px; height: 21px; border-radius: 7px;
+  display: grid; place-items: center;
+  font-size: 11.5px; font-weight: 700; color: #0b0b0d;
+}
+.folder .n { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .c { color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.folder.add { border-style: dashed; color: var(--dim); }
+.folder.add:hover { color: var(--accent); border-color: var(--accent); }
+.folder.flash { animation: flash .4s ease; }
+@keyframes flash { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }

@@ -1,10 +1,10 @@
-# Données personnelles — ne jamais committer
+# Personal data — never commit
 *.zip
 mydata~*
 memories/
 memories_history.json
-.snapsort/
-RAPPORT.md
+.sorter/
+REPORT.md
 
 # Python
 __pycache__/
@@ -12,6 +12,6 @@ __pycache__/
 .venv/
 venv/
 
-# Système
+# System
 .DS_Store
 Thumbs.db

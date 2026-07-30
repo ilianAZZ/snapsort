@@ -1,12 +1,12 @@
-"""État de tri : dossiers, décisions, cache média et file de copie.
+"""Sorting state: folders, decisions, media cache and the copy queue.
 
-Tout vit dans `<destination>/.snapsort/` :
-  index.json     catalogue des souvenirs et ordre de tri (écrit une seule fois)
-  state.json     réglages, dossiers, décisions, curseur (petit, écrit souvent)
-  journal.jsonl  historique append-only de chaque action (audit)
-  cache/         médias extraits à la demande des zips (purge LRU)
+Everything lives in `<destination>/.sorter/`:
+  index.json     memory catalogue and sort order (written once)
+  state.json     settings, folders, decisions, cursor (small, written often)
+  journal.jsonl  append-only history of every action (audit trail)
+  cache/         media extracted from the archives on demand (LRU eviction)
 
-Supprimer ce dossier remet le tri à zéro sans toucher aux fichiers déjà rangés.
+Deleting that folder resets the sort without touching the files already filed.
 """
 
 from __future__ import annotations
@@ -21,7 +21,12 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-APP_DIR = ".snapsort"
+from . import metadata, mp4
+
+APP_DIR = ".sorter"
+# The project used to be called SnapSort; sessions started back then keep
+# working rather than silently losing their progress.
+LEGACY_DIR = ".snapsort"
 
 PALETTE = [
     "#f97316", "#22d3ee", "#a78bfa", "#f472b6", "#4ade80",
@@ -32,39 +37,43 @@ DIGITS = "1234567890"
 DEFAULT_OPTIONS = {
     "layout": "year",        # flat | year | year-month
     "naming": "date",        # date | original
-    "mode": "copy",          # copy | move  (move réservé aux sources dossier)
+    "mode": "copy",          # copy | move  (move is for folder sources only)
     "trash": "ignore",       # ignore | collect
     "order": "oldest",       # oldest | newest | random
-    "keep_overlay": True,    # copier le calque -overlay.png à côté du média
+    "keep_overlay": True,    # copy the -overlay.png layer next to the media
+    "embed_metadata": True,  # write date + GPS into the copy (Exif / QuickTime)
+    "auto_join": False,      # join a clip that clearly continues the previous video
     "cache_gb": 3.0,
 }
 
+BUCKETS = {"keep": "Kept", "fav": "Favorites", "trash": "_Trash"}
+
 SAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
-# strftime('%B') suit la locale du système (souvent l'anglais) : on fixe les noms.
-MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-        "août", "septembre", "octobre", "novembre", "décembre")
+# strftime('%B') follows the system locale, which we do not control: pin the names.
+MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+          "August", "September", "October", "November", "December")
 
 
 def safe_folder_name(name: str) -> str:
     name = SAFE_NAME.sub("", (name or "").strip()).strip(". ")
-    return name[:60] or "Sans titre"
+    return name[:60] or "Untitled"
 
 
 def human_bytes(n: float) -> str:
-    for unit in ("o", "Ko", "Mo", "Go", "To"):
-        if n < 1024 or unit == "To":
-            return f"{n:.0f} {unit}" if unit == "o" else f"{n:.1f} {unit}"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
-    return f"{n:.1f} To"
+    return f"{n:.1f} TB"
 
 
 # ==========================================================================
-# Cache média
+# Media cache
 # ==========================================================================
 
 class MediaCache:
-    """Extrait à la demande un média d'un zip vers un fichier local réutilisable."""
+    """Extracts a media file from an archive on demand into a reusable local file."""
 
     def __init__(self, root: str, limit_bytes: int):
         self.root = root
@@ -79,7 +88,7 @@ class MediaCache:
             return self._locks.setdefault(key, threading.Lock())
 
     def path_for(self, item: dict, part: str) -> str | None:
-        """Chemin local lisible pour `main` ou `overlay` (None si absent)."""
+        """Readable local path for `main` or `overlay` (None when absent)."""
         if part == "overlay":
             entry, container, ext = item.get("overlay"), item.get("overlay_container"), "png"
         else:
@@ -99,8 +108,9 @@ class MediaCache:
                 return target
             tmp = target + ".part"
             try:
-                with zipfile.ZipFile(container) as z, z.open(entry) as fsrc, open(tmp, "wb") as fdst:
-                    shutil.copyfileobj(fsrc, fdst, 1024 * 512)
+                with zipfile.ZipFile(container) as archive, \
+                        archive.open(entry) as src, open(tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 512)
                 os.replace(tmp, target)
             except (KeyError, OSError, zipfile.BadZipFile):
                 if os.path.exists(tmp):
@@ -110,27 +120,27 @@ class MediaCache:
         return target
 
     def prefetch(self, items):
-        for it in items:
-            self._pool.submit(self.path_for, it, "main")
-            if it.get("overlay"):
-                self._pool.submit(self.path_for, it, "overlay")
+        for item in items:
+            self._pool.submit(self.path_for, item, "main")
+            if item.get("overlay"):
+                self._pool.submit(self.path_for, item, "overlay")
 
     def evict(self):
-        """Purge LRU (basée sur l'atime) une fois la limite dépassée."""
+        """LRU eviction (based on atime) once the limit is exceeded."""
         try:
             entries = []
             total = 0
-            with os.scandir(self.root) as it:
-                for e in it:
-                    if not e.is_file():
+            with os.scandir(self.root) as listing:
+                for entry in listing:
+                    if not entry.is_file():
                         continue
-                    st = e.stat()
-                    entries.append((st.st_atime, e.path, st.st_size))
-                    total += st.st_size
+                    stat = entry.stat()
+                    entries.append((stat.st_atime, entry.path, stat.st_size))
+                    total += stat.st_size
             if total <= self.limit:
                 return
             entries.sort()
-            for _, path, size in entries:
+            for _atime, path, size in entries:
                 if total <= self.limit * 0.8:
                     break
                 try:
@@ -151,11 +161,11 @@ class MediaCache:
 # ==========================================================================
 
 class Session:
-    ACTIONS = ("keep", "trash", "fav", "skip", "folder")
+    ACTIONS = ("keep", "trash", "fav", "skip", "folder", "merge")
 
     def __init__(self, dest: str):
         self.dest = os.path.abspath(dest)
-        self.dir = os.path.join(self.dest, APP_DIR)
+        self.dir = self.state_dir(self.dest)
         self.lock = threading.RLock()
 
         self.sources: list[str] = []
@@ -180,10 +190,26 @@ class Session:
         self._save_timer: threading.Timer | None = None
         self._replaying = False
 
-    # ---------------------------------------------------------------- infra
+    # ------------------------------------------------------------ plumbing
+
+    def _sweep_temp(self):
+        """Drop `.part` files a previous crash left behind (destination only).
+
+        A copy killed mid-flight leaves one. Any decision that mattered is
+        replayed from the journal right after, which writes it again.
+        """
+        for root, dirs, files in os.walk(self.dest):
+            dirs[:] = [d for d in dirs if d not in (APP_DIR, LEGACY_DIR)]
+            for name in files:
+                if name.endswith(".part"):
+                    try:
+                        os.remove(os.path.join(root, name))
+                    except OSError:
+                        pass
 
     def _ensure_dirs(self):
         os.makedirs(self.dir, exist_ok=True)
+        self._sweep_temp()
         self.cache = MediaCache(
             os.path.join(self.dir, "cache"),
             int(self.options.get("cache_gb", 3.0) * 1024 ** 3),
@@ -194,17 +220,25 @@ class Session:
             self._worker.start()
 
     @staticmethod
-    def exists(dest: str) -> bool:
-        return os.path.isfile(os.path.join(dest, APP_DIR, "state.json"))
+    def state_dir(dest: str) -> str:
+        current = os.path.join(dest, APP_DIR)
+        legacy = os.path.join(dest, LEGACY_DIR)
+        if not os.path.isdir(current) and os.path.isdir(legacy):
+            return legacy
+        return current
 
-    # ------------------------------------------------------------ création
+    @staticmethod
+    def exists(dest: str) -> bool:
+        return os.path.isfile(os.path.join(Session.state_dir(dest), "state.json"))
+
+    # ------------------------------------------------------------- startup
 
     def start(self, sources: list[str], options: dict):
         with self.lock:
             self.sources = [os.path.abspath(s) for s in sources]
             self.options = {**DEFAULT_OPTIONS, **(options or {})}
             if any(s.lower().endswith(".zip") for s in self.sources):
-                self.options["mode"] = "copy"  # jamais de déplacement depuis un zip
+                self.options["mode"] = "copy"  # never move anything out of an archive
             self.folders, self.decisions, self.cursor = [], {}, 0
             self._ensure_dirs()
         threading.Thread(target=self._do_scan, daemon=True).start()
@@ -232,7 +266,7 @@ class Session:
             random.Random(1789).shuffle(ids)
         self.order = ids
 
-    # ------------------------------------------------------ persistance
+    # --------------------------------------------------------- persistence
 
     def _write(self, name: str, payload: dict):
         tmp = os.path.join(self.dir, name + ".tmp")
@@ -241,14 +275,14 @@ class Session:
         os.replace(tmp, os.path.join(self.dir, name))
 
     def save_index(self):
-        """L'index (lourd, ~3 Mo) ne change qu'au scan ou si l'ordre change."""
+        """The index is heavy (~3 MB) and only changes on a scan or a reorder."""
         with self.lock:
             payload = {"version": 2, "sources": self.sources, "stats": self.stats,
                        "items": self.items, "order": self.order}
         self._write("index.json", payload)
 
     def save(self):
-        """Écrit l'état immédiatement (petit fichier : décisions, dossiers, curseur)."""
+        """Write the state right away (small file: decisions, folders, cursor)."""
         with self.lock:
             self._dirty = False
             payload = {"version": 2, "saved_at": time.time(), "options": self.options,
@@ -257,9 +291,9 @@ class Session:
         self._write("state.json", payload)
 
     def touch(self):
-        """Marque l'état modifié ; l'écriture est regroupée (au plus une par seconde).
+        """Mark the state dirty; the write is batched (at most one per second).
 
-        Le journal append-only garde de son côté la trace de chaque action.
+        The append-only journal keeps a trace of every action in the meantime.
         """
         with self.lock:
             self._dirty = True
@@ -296,18 +330,18 @@ class Session:
             self.cursor = state.get("cursor", 0)
             self.stats = index.get("stats", {})
             self.by_id = {i["id"]: i for i in self.items}
-            self.scan_progress = {"done": True, "step": "terminé",
+            self.scan_progress = {"done": True, "step": "done",
                                   "files": 0, "items": len(self.items), "current": ""}
             self._ensure_dirs()
         self._recover(state.get("saved_at", 0))
         return True
 
     def _recover(self, since: float) -> int:
-        """Rejoue les actions du journal plus récentes que le dernier état écrit.
+        """Replay journal entries newer than the last written state.
 
-        L'état est écrit de façon regroupée : une coupure brutale (terminal fermé,
-        machine éteinte) peut le laisser en retard d'une seconde. Le journal, lui,
-        est écrit à chaque action : il permet de ne rien perdre.
+        The state is written in batches: an abrupt shutdown (terminal closed,
+        machine powered off) can leave it a second behind. The journal is
+        written on every action, so nothing is ever lost.
         """
         path = os.path.join(self.dir, "journal.jsonl")
         if not os.path.isfile(path):
@@ -331,6 +365,8 @@ class Session:
                 try:
                     if kind == "decide":
                         self.decide(record["id"], record["action"], record.get("folder"))
+                    elif kind == "merge":
+                        self.merge(record["id"])
                     elif kind == "undo":
                         self.undo()
                     elif kind == "replay":
@@ -349,7 +385,7 @@ class Session:
         with open(os.path.join(self.dir, "journal.jsonl"), "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    # --------------------------------------------------------- dossiers
+    # ------------------------------------------------------------- folders
 
     def free_key(self) -> str | None:
         used = {f.get("key") for f in self.folders}
@@ -397,46 +433,50 @@ class Session:
             self.folders = [f for f in self.folders if f["id"] != fid]
             self.save()
 
-    # -------------------------------------------------------- décisions
+    # ----------------------------------------------------------- decisions
 
     def _bucket_name(self, action: str, folder: dict | None) -> str | None:
         if action == "folder" and folder:
             return safe_folder_name(folder["name"])
-        return {"keep": "Gardés", "fav": "Favoris",
-                "trash": "_Corbeille" if self.options["trash"] == "collect" else None,
-                "skip": None}.get(action)
+        if action == "trash":
+            return BUCKETS["trash"] if self.options["trash"] == "collect" else None
+        return BUCKETS.get(action)
 
     def _target_path(self, item: dict, bucket: str, part: str) -> str:
-        dt = datetime.fromtimestamp(item["ts"], timezone.utc).astimezone()
+        when = datetime.fromtimestamp(item["ts"], timezone.utc).astimezone()
         layout = self.options["layout"]
         sub = ""
         if layout == "year":
-            sub = dt.strftime("%Y")
+            sub = when.strftime("%Y")
         elif layout == "year-month":
-            sub = os.path.join(dt.strftime("%Y"), f"{dt.month:02d} - {MOIS[dt.month - 1]}")
+            sub = os.path.join(when.strftime("%Y"),
+                               f"{when.month:02d} - {MONTHS[when.month - 1]}")
 
         ext = "png" if part == "overlay" else item["ext"]
         if self.options["naming"] == "original":
             stem = f"{item['id']}-{part}"
         else:
-            suffix = "-calque" if part == "overlay" else ""
-            stem = f"{dt.strftime('%Y-%m-%d_%Hh%Mm%Ss')}_{item['id'][-6:]}{suffix}"
+            suffix = "-overlay" if part == "overlay" else ""
+            stem = f"{when.strftime('%Y-%m-%d_%Hh%Mm%Ss')}_{item['id'][-6:]}{suffix}"
         return os.path.join(self.dest, bucket, sub, f"{stem}.{ext}")
 
     def decide(self, item_id: str, action: str, folder_id: str | None = None) -> dict:
+        if action == "merge":
+            return self.merge(item_id)
         if action not in self.ACTIONS:
-            raise ValueError(f"action inconnue : {action}")
+            raise ValueError(f"unknown action: {action}")
         with self.lock:
             item = self.by_id.get(item_id)
             if not item:
                 raise KeyError(item_id)
-            folder = next((f for f in self.folders if f["id"] == folder_id), None) if folder_id else None
+            folder = (next((f for f in self.folders if f["id"] == folder_id), None)
+                      if folder_id else None)
             if action == "folder" and not folder:
-                raise ValueError("dossier introuvable")
+                raise ValueError("folder not found")
 
             previous = self.decisions.get(item_id)
             if previous:
-                self._undo_files(previous)
+                self._detach(item_id, previous)
 
             decision = {"action": action, "folder": folder_id, "files": [], "at": time.time()}
             self.decisions[item_id] = decision
@@ -446,33 +486,144 @@ class Session:
                 jobs = [("main", self._target_path(item, bucket, "main"))]
                 if item.get("overlay") and self.options["keep_overlay"]:
                     jobs.append(("overlay", self._target_path(item, bucket, "overlay")))
-                decision["files"] = [p for _, p in jobs]
-                self._enqueue(item, jobs)
+                decision["files"] = [path for _part, path in jobs]
+                self._enqueue([("copy", item, part, path) for part, path in jobs])
+
+            # Segments already joined to this one follow it to its new home.
+            members = self._members(item_id)
+            if members and bucket:
+                self._enqueue([("merge", item_id, None, None)])
+            elif members:
+                for member_id in members:
+                    self.decisions.pop(member_id, None)
 
             self._recount()
-            idx = self.order.index(item_id) if item_id in self.order else self.cursor
-            self.cursor = max(self.cursor, idx + 1)
-            self._journal({"type": "decide", "id": item_id, "action": action, "folder": folder_id})
+            index = self.order.index(item_id) if item_id in self.order else self.cursor
+            self.cursor = max(self.cursor, index + 1)
+            self._journal({"type": "decide", "id": item_id, "action": action,
+                           "folder": folder_id})
             self.touch()
             return decision
 
+    # --------------------------------------------------------- joining videos
+
+    def _last_decided(self) -> str | None:
+        if not self.decisions:
+            return None
+        return max(self.decisions, key=lambda k: self.decisions[k]["at"])
+
+    def _members(self, root_id: str) -> list[str]:
+        """Segments joined to `root_id`, in sort order."""
+        ids = [k for k, d in self.decisions.items()
+               if d.get("action") == "merge" and d.get("root") == root_id]
+        position = {item_id: i for i, item_id in enumerate(self.order)}
+        return sorted(ids, key=lambda k: position.get(k, 0))
+
+    def merge(self, item_id: str) -> dict:
+        """Join this video to the previous decision instead of filing it on its own.
+
+        Snapchat caps a recording at ten seconds, so a long video comes back as
+        several consecutive memories. The segments are concatenated into the
+        file the first one produced; nothing is re-encoded.
+        """
+        with self.lock:
+            item = self.by_id.get(item_id)
+            if not item:
+                raise KeyError(item_id)
+            if item["kind"] != "video":
+                raise ValueError("only videos can be joined")
+
+            previous_id = self._last_decided()
+            if not previous_id or previous_id == item_id:
+                raise ValueError("no previous memory to join to")
+            previous = self.decisions[previous_id]
+            root_id = previous.get("root") or previous_id
+            root = self.decisions.get(root_id)
+            root_item = self.by_id.get(root_id)
+            if not root or not root.get("files"):
+                raise ValueError("the previous memory was not kept anywhere")
+            if not root_item or root_item["kind"] != "video":
+                raise ValueError("the previous memory is not a video")
+
+            existing = self.decisions.get(item_id)
+            if existing:
+                self._detach(item_id, existing)
+            self.decisions[item_id] = {"action": "merge", "folder": None, "root": root_id,
+                                       "files": [], "at": time.time()}
+            self._enqueue([("merge", root_id, None, None)])
+
+            self._recount()
+            index = self.order.index(item_id) if item_id in self.order else self.cursor
+            self.cursor = max(self.cursor, index + 1)
+            self._journal({"type": "merge", "id": item_id})
+            self.touch()
+            return self.decisions[item_id]
+
+    def _media_bytes(self, item: dict) -> bytes | None:
+        if item["src"] == "file":
+            path = item["entry"]
+            if not os.path.exists(path):
+                return None
+            with open(path, "rb") as fh:
+                return fh.read()
+        cached = self.cache.path_for(item, "main") if self.cache else None
+        if cached and os.path.exists(cached):
+            with open(cached, "rb") as fh:
+                return fh.read()
+        with zipfile.ZipFile(item["container"]) as archive:
+            return archive.read(item["entry"])
+
+    def _do_merge(self, root_id: str):
+        """Rebuild a joined video from its segments, in order.
+
+        Always rebuilt from scratch rather than appended to, so that undoing a
+        join simply produces the file again with one segment fewer.
+        """
+        with self.lock:
+            root = self.decisions.get(root_id)
+            members = [root_id] + self._members(root_id)
+            target = root["files"][0] if root and root.get("files") else None
+            items = [self.by_id.get(i) for i in members]
+        if not target or not all(items):
+            return
+
+        segments = [self._media_bytes(item) for item in items]
+        if any(chunk is None for chunk in segments):
+            self._errors.append(f"{root_id}: a segment could not be read")
+            return
+        joined = mp4.concat(segments)
+        if joined is None:
+            self._errors.append(
+                f"{root_id}: these segments cannot be joined without re-encoding")
+            return
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        tmp = target + ".part"
+        with open(tmp, "wb") as fh:
+            fh.write(joined)
+        if self.options.get("embed_metadata", True):
+            metadata.embed(tmp, items[0]["ts"], items[0].get("lat"), items[0].get("lon"),
+                           ext=target.rsplit(".", 1)[-1])
+        os.replace(tmp, target)
+        os.utime(target, (items[0]["ts"], items[0]["ts"]))
+
     def _recount(self):
-        """Recalcule le nombre de souvenirs de chaque dossier."""
+        """Recompute how many memories each folder holds."""
         tally: dict[str, int] = {}
-        for d in self.decisions.values():
-            if d["action"] == "folder" and d.get("folder"):
-                tally[d["folder"]] = tally.get(d["folder"], 0) + 1
+        for decision in self.decisions.values():
+            if decision["action"] == "folder" and decision.get("folder"):
+                tally[decision["folder"]] = tally.get(decision["folder"], 0) + 1
         for folder in self.folders:
             folder["count"] = tally.get(folder["id"], 0)
 
     def undo(self) -> str | None:
-        """Annule la dernière décision et repositionne le curseur dessus."""
+        """Undo the most recent decision and put the cursor back on it."""
         with self.lock:
             if not self.decisions:
                 return None
-            item_id = max(self.decisions, key=lambda k: self.decisions[k]["at"])
+            item_id = self._last_decided()
             decision = self.decisions.pop(item_id)
-            self._undo_files(decision)
+            self._detach(item_id, decision)
             self._recount()
             if item_id in self.order:
                 self.cursor = self.order.index(item_id)
@@ -480,8 +631,21 @@ class Session:
             self.touch()
             return item_id
 
+    def _detach(self, item_id: str, decision: dict):
+        """Roll back everything a decision produced, before dropping or replacing it."""
+        self._undo_files(decision)
+        if decision.get("action") == "merge":
+            # The file belongs to the root: rebuild it without this segment.
+            root_id = decision.get("root")
+            if root_id in self.decisions:
+                self._enqueue([("merge", root_id, None, None)])
+            return
+        # Undoing a root leaves its segments with nowhere to go.
+        for member_id in self._members(item_id):
+            self.decisions.pop(member_id, None)
+
     def _undo_files(self, decision: dict):
-        """Retire les fichiers produits par une décision (jamais la source)."""
+        """Remove the files a decision produced (never a source file)."""
         for path in decision.get("files", []):
             try:
                 if os.path.isfile(path):
@@ -500,12 +664,12 @@ class Session:
             self.cursor = max(0, min(index, len(self.order)))
             self.save()
 
-    # ------------------------------------------------------- copie async
+    # ------------------------------------------------------ background copy
 
-    def _enqueue(self, item: dict, jobs: list[tuple]):
+    def _enqueue(self, jobs: list[tuple]):
         with self._queue_cv:
-            for part, target in jobs:
-                self._queue.append((item, part, target))
+            for job in jobs:
+                self._queue.append(job)
                 self._pending += 1
             self._queue_cv.notify()
 
@@ -516,11 +680,14 @@ class Session:
                     self._queue_cv.wait(0.5)
                 if self._stop:
                     return
-                item, part, target = self._queue.pop(0)
+                job = self._queue.pop(0)
             try:
-                self._transfer(item, part, target)
-            except Exception as exc:  # noqa: BLE001 — on ne bloque jamais le tri
-                self._errors.append(f"{item['id']} : {exc}")
+                if job[0] == "merge":
+                    self._do_merge(job[1])
+                else:
+                    self._transfer(job[1], job[2], job[3])
+            except Exception as exc:  # noqa: BLE001 — sorting must never block
+                self._errors.append(f"{job[1] if job[0] == 'merge' else job[1]['id']}: {exc}")
             finally:
                 with self._queue_cv:
                     self._pending -= 1
@@ -545,49 +712,54 @@ class Session:
             if cached and os.path.exists(cached):
                 shutil.copy2(cached, tmp)
             else:
-                with zipfile.ZipFile(container) as z, z.open(entry) as fsrc, open(tmp, "wb") as fdst:
-                    shutil.copyfileobj(fsrc, fdst, 1024 * 512)
+                with zipfile.ZipFile(container) as archive, \
+                        archive.open(entry) as src, open(tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 512)
+        if self.options.get("embed_metadata", True):
+            # Written on the copy, never on the source (invariant 1).
+            metadata.embed(tmp, item["ts"], item.get("lat"), item.get("lon"),
+                           ext=target.rsplit(".", 1)[-1])
         os.replace(tmp, target)
-        os.utime(target, (item["ts"], item["ts"]))  # conserve la date du souvenir
+        os.utime(target, (item["ts"], item["ts"]))  # keep the memory's own date
 
-    # ------------------------------------------------------------ lecture
+    # ------------------------------------------------------------- reading
 
     def counts(self) -> dict:
         with self.lock:
-            out = {a: 0 for a in self.ACTIONS}
-            for d in self.decisions.values():
-                out[d["action"]] = out.get(d["action"], 0) + 1
+            out = {action: 0 for action in self.ACTIONS}
+            for decision in self.decisions.values():
+                out[decision["action"]] = out.get(decision["action"], 0) + 1
             out["done"] = len(self.decisions)
             out["total"] = len(self.order)
             out["pending"] = self._pending
             return out
 
     def queue(self, start: int, count: int) -> tuple[list[dict], int]:
-        """Les `count` prochains souvenirs *non encore décidés* à partir de `start`.
+        """The next `count` memories *not yet decided*, starting at `start`.
 
-        Chaque élément porte son index absolu dans l'ordre de tri, et le second
-        membre du tuple indique où reprendre le balayage. Les souvenirs déjà
-        triés sont ignorés : reprendre une session ou annuler ne les ré-affiche
-        jamais.
+        Each entry carries its absolute index in the sort order, and the second
+        member of the tuple says where to resume scanning. Memories already
+        sorted are skipped, so resuming a session or undoing never shows one
+        again.
         """
         with self.lock:
             out: list[dict] = []
             i = max(0, start)
             while i < len(self.order) and len(out) < count:
-                iid = self.order[i]
-                if iid not in self.decisions and iid in self.by_id:
-                    out.append(dict(self.by_id[iid], index=i))
+                item_id = self.order[i]
+                if item_id not in self.decisions and item_id in self.by_id:
+                    out.append(dict(self.by_id[item_id], index=i))
                 i += 1
         if self.cache:
             self.cache.prefetch(out[:6])
         return out, i
 
     def replay(self, action: str = "skip") -> int:
-        """Remet en file les souvenirs décidés avec `action` (par défaut : passés)."""
+        """Put memories decided with `action` back in the queue (default: skipped)."""
         with self.lock:
             ids = [k for k, v in self.decisions.items() if v["action"] == action]
-            for k in ids:
-                self._undo_files(self.decisions.pop(k))
+            for item_id in ids:
+                self._detach(item_id, self.decisions.pop(item_id))
             positions = [self.order.index(i) for i in ids if i in self.order]
             if positions:
                 self.cursor = min(positions)
@@ -610,45 +782,48 @@ class Session:
                 "errors": self._errors[-5:],
             }
 
-    # ------------------------------------------------------------ rapport
+    # -------------------------------------------------------------- report
 
     def report(self) -> str:
-        self.save()  # l'état sur disque reflète le rapport produit
+        self.save()  # what is on disk matches the report we hand out
         with self.lock:
             counts = self.counts()
             lines = [
-                "# Rapport de tri SnapSort", "",
-                f"*Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}*", "",
-                "## Résumé", "",
-                f"- **{counts['total']}** souvenirs indexés",
-                f"- **{counts['done']}** triés "
-                f"({counts['done'] * 100 // max(counts['total'], 1)} %)",
-                f"- **{counts['keep']}** gardés · **{counts['fav']}** favoris · "
-                f"**{counts['trash']}** à supprimer · **{counts['skip']}** passés",
-                f"- Volume source : **{human_bytes(self.stats.get('bytes', 0))}**",
-                "", "## Dossiers", "",
+                "# Snapchat Memories Sorter report", "",
+                f"*Generated on {datetime.now().strftime('%Y-%m-%d at %H:%M')}*", "",
+                "## Summary", "",
+                f"- **{counts['total']}** memories indexed",
+                f"- **{counts['done']}** sorted "
+                f"({counts['done'] * 100 // max(counts['total'], 1)}%)",
+                f"- **{counts['keep']}** kept · **{counts['fav']}** favourites · "
+                f"**{counts['trash']}** discarded · **{counts['skip']}** skipped",
+                f"- Source volume: **{human_bytes(self.stats.get('bytes', 0))}**",
             ]
+            if counts.get("merge"):
+                lines.append(f"- **{counts['merge']}** segments joined to a longer video")
+            lines += ["", "## Folders", ""]
             if self.folders:
-                lines += ["| Touche | Dossier | Souvenirs |", "|---|---|---|"]
-                for f in self.folders:
-                    lines.append(f"| `{f.get('key') or '—'}` | {f['name']} | {f.get('count', 0)} |")
+                lines += ["| Key | Folder | Memories |", "|---|---|---|"]
+                for folder in self.folders:
+                    lines.append(f"| `{folder.get('key') or '—'}` | {folder['name']} "
+                                 f"| {folder.get('count', 0)} |")
             else:
-                lines.append("*Aucun dossier personnalisé.*")
+                lines.append("*No custom folder.*")
 
             per_year: dict[str, int] = {}
-            for item_id, d in self.decisions.items():
-                if d["action"] in ("trash", "skip"):
+            for item_id, decision in self.decisions.items():
+                if decision["action"] in ("trash", "skip"):
                     continue
                 item = self.by_id.get(item_id)
                 if item:
                     year = datetime.fromtimestamp(item["ts"], timezone.utc).strftime("%Y")
                     per_year[year] = per_year.get(year, 0) + 1
             if per_year:
-                lines += ["", "## Conservés par année", "", "| Année | Souvenirs |", "|---|---|"]
-                lines += [f"| {y} | {n} |" for y, n in sorted(per_year.items())]
+                lines += ["", "## Kept per year", "", "| Year | Memories |", "|---|---|"]
+                lines += [f"| {year} | {n} |" for year, n in sorted(per_year.items())]
 
-            lines += ["", "---", "", "Les fichiers source n'ont jamais été modifiés.", ""]
+            lines += ["", "---", "", "The source files were never modified.", ""]
             text = "\n".join(lines)
-        with open(os.path.join(self.dest, "RAPPORT.md"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(self.dest, "REPORT.md"), "w", encoding="utf-8") as fh:
             fh.write(text)
         return text

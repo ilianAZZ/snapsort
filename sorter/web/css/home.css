@@ -1,0 +1,132 @@
+/* ══════════════════════════════════════════════════════════════════
+   Landing page — two columns on one surface: the pitch, then the ways in
+   ══════════════════════════════════════════════════════════════════ */
+
+#home { position: relative; }
+#home.active { display: grid; }
+
+/* A warm pool of light behind the mark, so the page greets rather than sits
+   there. It belongs to the screen, not to either column — nothing visually
+   divides the two. */
+#home::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(680px 420px at 22% 38%, rgba(255, 252, 0, .085), transparent 70%),
+    radial-gradient(560px 420px at 82% 72%, rgba(125, 211, 252, .05), transparent 70%);
+}
+
+.split {
+  position: relative; z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: clamp(24px, 4vw, 64px);
+  padding: 48px clamp(28px, 6vw, 96px);
+}
+
+.split-left, .split-right {
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.split-right { gap: 12px; }
+
+/* ─────────────────────────── left: the pitch ─────────────────────────── */
+
+.hero-logo {
+  border-radius: 26px;
+  box-shadow: 0 20px 64px rgba(255, 252, 0, .26);
+  margin-bottom: 30px;
+}
+.split-left h1 {
+  font-size: clamp(36px, 4.6vw, 58px);
+  line-height: 1.02;
+  letter-spacing: -.045em;
+}
+.lead {
+  margin-top: 20px;
+  max-width: 19em;
+  font-size: clamp(15px, 1.35vw, 17px); line-height: 1.55;
+  color: var(--dim);
+}
+.split-left .tiny { margin-top: 24px; }
+
+/* ─────────────────────────── right: the ways in ─────────────────────────── */
+
+.way {
+  display: flex; align-items: center; gap: 16px;
+  width: 100%; max-width: 560px;
+  padding: 20px 22px;
+  text-align: left;
+  border-radius: 18px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  cursor: pointer;
+  transition: transform .14s, background .18s, border-color .18s, box-shadow .18s;
+}
+.way:hover {
+  background: rgba(255, 255, 255, .1);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, .38);
+}
+.way:active { transform: translateY(0) scale(.995); }
+
+.way-icon {
+  width: 44px; height: 44px; flex: none;
+  border-radius: 14px;
+  display: grid; place-items: center;
+  font-size: 19px;
+  background: rgba(255, 255, 255, .07);
+}
+.way-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.way-body b { font-size: 17.5px; font-weight: 650; letter-spacing: -.015em; }
+.way-body small {
+  font-size: 12.5px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.way-go { font-size: 17px; color: var(--dim); flex: none; transition: transform .18s; }
+.way:hover .way-go { transform: translateX(3px); }
+
+.way.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #131300;
+  box-shadow: 0 16px 42px rgba(255, 252, 0, .2);
+}
+.way.primary:hover { background: #fffd4d; box-shadow: 0 20px 50px rgba(255, 252, 0, .28); }
+.way.primary .way-icon { background: rgba(19, 19, 0, .13); }
+.way.primary small, .way.primary .way-go { color: rgba(19, 19, 0, .66); }
+
+/* Progress lives inside the resume card: one card that says everything. */
+.way .meter {
+  margin-top: 9px;
+  height: 5px; border-radius: 5px;
+  background: rgba(19, 19, 0, .18);
+  overflow: hidden;
+}
+.way .meter i { display: block; height: 100%; border-radius: 5px; background: #131300; }
+
+/* ─────────────────────────── about ─────────────────────────── */
+
+.about-body p { font-size: 13.5px; line-height: 1.6; color: var(--dim); }
+.about-body p b { color: var(--txt); font-weight: 600; }
+
+.meta-list { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.meta-list > div { display: flex; gap: 12px; }
+.meta-list dt { width: 74px; flex: none; color: var(--dim); }
+.meta-list dd { color: var(--txt); }
+.meta-list a { color: var(--accent); text-decoration: none; }
+.meta-list a:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  #home { overflow-y: auto; }
+  .split {
+    grid-template-columns: 1fr; height: auto; min-height: 100%;
+    align-content: center; gap: 34px;
+    padding: 56px 24px;
+  }
+  .way { max-width: none; }
+  .lead { max-width: none; }
+}
