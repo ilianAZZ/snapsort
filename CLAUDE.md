@@ -148,6 +148,17 @@ Inside `<destination>/.sorter/`:
 | `journal.jsonl` | one line per action | on every action |
 | `cache/` | extracted media | LRU eviction (`cache_gb`, 3 GB) |
 
+`cache/` holds only what has actually been looked at (plus the handful the queue
+prefetches), never the whole export: ~84 MB for 30 memories on a real export, and
+bounded by `cache_gb` — measured growing to the limit, purging to 80%, and
+staying there. It exists because a ZIP entry is deflate-compressed: there is no
+seeking inside one, so no `Range` and no scrubbing through a video. `_transfer`
+reuses it, so keeping a memory you have just watched costs no second extraction.
+
+It is disposable, **including while the app is running** — `path_for` recreates
+the folder before extracting. Do not remove that `makedirs`: this is the folder
+people delete to reclaim space, and they do it with the app open.
+
 `save_index()` for the heavy one, `save()` for an immediate state write,
 `touch()` for a batched write (use this on hot paths like `decide`).
 

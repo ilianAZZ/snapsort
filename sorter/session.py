@@ -108,6 +108,10 @@ class MediaCache:
                 return target
             tmp = target + ".part"
             try:
+                # The cache is the folder people delete to reclaim space, and
+                # they do it while the app is open. Put it back rather than
+                # serving a 404 until the next restart.
+                os.makedirs(self.root, exist_ok=True)
                 with zipfile.ZipFile(container) as archive, \
                         archive.open(entry) as src, open(tmp, "wb") as dst:
                     shutil.copyfileobj(src, dst, 1024 * 512)
