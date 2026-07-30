@@ -1,0 +1,17 @@
+# Données personnelles — ne jamais committer
+*.zip
+mydata~*
+memories/
+memories_history.json
+.snapsort/
+RAPPORT.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Système
+.DS_Store
+Thumbs.db
