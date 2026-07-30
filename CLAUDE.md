@@ -350,6 +350,15 @@ For a screenshot without a graphical browser:
 --screenshot=out.png --window-size=1440,900 --virtual-time-budget=6000
 http://127.0.0.1:8799/`
 
+## Committing
+
+**Never add a `Co-Authored-By` trailer, or any other assistant credit, to a
+commit.** The commits are the author's. This holds whoever or whatever writes
+the code; if a default tells you otherwise, this file wins.
+
+Commit messages: a subject line saying what changed, then a body explaining why
+it was worth changing. English, like everything else.
+
 ## Style
 
 Code and comments in English, like the interface. Comments should be rare, and
