@@ -42,9 +42,21 @@ DEFAULT_OPTIONS = {
     "order": "oldest",       # oldest | newest | random
     "keep_overlay": True,    # copy the -overlay.png layer next to the media
     "embed_metadata": True,  # write date + GPS into the copy (Exif / QuickTime)
-    "auto_join": False,      # join a clip that clearly continues the previous video
+    "group_split": True,     # show a split recording as one card, decided in one go
     "cache_gb": 3.0,
 }
+
+# A ZIP stores modification times to the nearest two seconds, so a segment that
+# continues the previous one starts within that much of where it ended.
+JOIN_SLACK_S = 2.0
+# A recording is capped at ten seconds; past this many segments something else
+# is going on and we stop trying to read a story into the timestamps.
+MAX_SEGMENTS = 60
+# No clip runs longer than this, so a memory further away than that from the
+# previous one cannot be its continuation — and needs no header read to say so.
+MAX_CLIP_S = 90
+# Enough to cover a Snapchat `moov`, which sits before `mdat`.
+HEAD_BYTES = 256 * 1024
 
 BUCKETS = {"keep": "Kept", "fav": "Favorites", "trash": "_Trash"}
 
@@ -123,6 +135,15 @@ class MediaCache:
         self._pool.submit(self.evict)
         return target
 
+    def existing(self, item: dict, part: str) -> str | None:
+        """Local path only if it is already there — never extracts."""
+        if item["src"] == "file":
+            entry = item.get("overlay") if part == "overlay" else item["entry"]
+            return entry if entry and os.path.exists(entry) else None
+        ext = "png" if part == "overlay" else item["ext"]
+        target = os.path.join(self.root, f"{item['id']}-{part}.{ext}")
+        return target if os.path.exists(target) else None
+
     def prefetch(self, items):
         for item in items:
             self._pool.submit(self.path_for, item, "main")
@@ -184,6 +205,7 @@ class Session:
         self.scan_progress = {"done": False, "step": "", "files": 0, "items": 0, "current": ""}
 
         self.cache: MediaCache | None = None
+        self._durations: dict[str, float | None] = {}
         self._queue: list[tuple] = []
         self._queue_cv = threading.Condition()
         self._worker: threading.Thread | None = None
@@ -193,6 +215,7 @@ class Session:
         self._dirty = False
         self._save_timer: threading.Timer | None = None
         self._replaying = False
+        self._quiet = 0
 
     # ------------------------------------------------------------ plumbing
 
@@ -369,6 +392,9 @@ class Session:
                 try:
                     if kind == "decide":
                         self.decide(record["id"], record["action"], record.get("folder"))
+                    elif kind == "group":
+                        self.decide_group(record["ids"], record["action"],
+                                          record.get("folder"))
                     elif kind == "merge":
                         self.merge(record["id"])
                     elif kind == "undo":
@@ -383,7 +409,7 @@ class Session:
         return len(pending)
 
     def _journal(self, record: dict):
-        if self._replaying:
+        if self._replaying or self._quiet:
             return
         record["at"] = time.time()
         with open(os.path.join(self.dir, "journal.jsonl"), "a", encoding="utf-8") as fh:
@@ -511,6 +537,55 @@ class Session:
 
     # --------------------------------------------------------- joining videos
 
+    def _head_bytes(self, item: dict, count: int) -> bytes | None:
+        """The first `count` bytes of a media file, without extracting all of it."""
+        path = self.cache.existing(item, "main") if self.cache else None
+        try:
+            if path:
+                with open(path, "rb") as fh:
+                    return fh.read(count)
+            if item["src"] == "file":
+                return None                     # a file source is its own cache path
+            with zipfile.ZipFile(item["container"]) as archive, \
+                    archive.open(item["entry"]) as src:
+                return src.read(count)
+        except (KeyError, OSError, zipfile.BadZipFile):
+            return None
+
+    def duration_of(self, item: dict) -> float | None:
+        """How long a video lasts, read from its header once and remembered.
+
+        This is what makes a split recording visible *before* it is decided: the
+        export marks nothing, so the only signal is that the next memory starts
+        exactly where this one ends.
+        """
+        if item["kind"] != "video":
+            return None
+        item_id = item["id"]
+        if item_id not in self._durations:
+            head = self._head_bytes(item, HEAD_BYTES)
+            self._durations[item_id] = mp4.duration(head) if head else None
+        return self._durations[item_id]
+
+    def _segment_span(self, window: list[tuple[int, dict]], pos: int) -> int:
+        """How many memories from `pos` are segments of one recording."""
+        span = 1
+        while span < MAX_SEGMENTS and pos + span < len(window):
+            current, following = window[pos + span - 1][1], window[pos + span][1]
+            if following["kind"] != "video":
+                break
+            # Reading a header means reaching into the archive, so only bother
+            # when the two are close enough to possibly be one recording.
+            if following["ts"] - current["ts"] > MAX_CLIP_S:
+                break
+            length = self.duration_of(current)
+            if not length:
+                break
+            if abs(following["ts"] - (current["ts"] + length)) > JOIN_SLACK_S:
+                break
+            span += 1
+        return span
+
     def _last_decided(self) -> str | None:
         if not self.decisions:
             return None
@@ -523,12 +598,13 @@ class Session:
         position = {item_id: i for i, item_id in enumerate(self.order)}
         return sorted(ids, key=lambda k: position.get(k, 0))
 
-    def merge(self, item_id: str) -> dict:
-        """Join this video to the previous decision instead of filing it on its own.
+    def merge(self, item_id: str, root_id: str | None = None, rebuild: bool = True) -> dict:
+        """Join this video to another decision instead of filing it on its own.
 
         Snapchat caps a recording at ten seconds, so a long video comes back as
         several consecutive memories. The segments are concatenated into the
-        file the first one produced; nothing is re-encoded.
+        file the first one produced; nothing is re-encoded. Without `root_id`
+        the target is whatever was decided last — that is the manual J.
         """
         with self.lock:
             item = self.by_id.get(item_id)
@@ -537,11 +613,12 @@ class Session:
             if item["kind"] != "video":
                 raise ValueError("only videos can be joined")
 
-            previous_id = self._last_decided()
-            if not previous_id or previous_id == item_id:
-                raise ValueError("no previous memory to join to")
-            previous = self.decisions[previous_id]
-            root_id = previous.get("root") or previous_id
+            if root_id is None:
+                previous_id = self._last_decided()
+                if not previous_id or previous_id == item_id:
+                    raise ValueError("no previous memory to join to")
+                previous = self.decisions[previous_id]
+                root_id = previous.get("root") or previous_id
             root = self.decisions.get(root_id)
             root_item = self.by_id.get(root_id)
             if not root or not root.get("files"):
@@ -554,7 +631,8 @@ class Session:
                 self._detach(item_id, existing)
             self.decisions[item_id] = {"action": "merge", "folder": None, "root": root_id,
                                        "files": [], "at": time.time()}
-            self._enqueue([("merge", root_id, None, None)])
+            if rebuild:
+                self._enqueue([("merge", root_id, None, None)])
 
             self._recount()
             index = self.order.index(item_id) if item_id in self.order else self.cursor
@@ -562,6 +640,41 @@ class Session:
             self._journal({"type": "merge", "id": item_id})
             self.touch()
             return self.decisions[item_id]
+
+    def decide_group(self, ids: list[str], action: str, folder_id: str | None = None) -> dict:
+        """Decide a whole split recording in one go.
+
+        The first segment is filed normally and the others are joined onto it,
+        so the user decides the video they watched rather than each ten-second
+        piece of it. Discarding or skipping needs no gluing: every segment is
+        simply decided the same way.
+        """
+        ids = [i for i in ids if i in self.by_id]
+        if not ids:
+            raise KeyError("unknown memory")
+        if len(ids) == 1:
+            return self.decide(ids[0], action, folder_id)
+        with self.lock:
+            joins = action in ("keep", "fav", "folder")
+            self._quiet += 1                    # one journal line for the whole group
+            try:
+                first = self.decide(ids[0], action, folder_id)
+                for member in ids[1:]:
+                    if joins:
+                        self.merge(member, root_id=ids[0], rebuild=False)
+                    else:
+                        self.decide(member, action, folder_id)
+            finally:
+                self._quiet -= 1
+            if joins:
+                self._enqueue([("merge", ids[0], None, None)])   # rebuilt once, not per part
+            # Remembered so that one undo takes the whole recording back.
+            for item_id in ids:
+                if item_id in self.decisions:
+                    self.decisions[item_id]["group"] = ids
+            self._journal({"type": "group", "ids": ids, "action": action, "folder": folder_id})
+            self.touch()
+            return first
 
     def _media_bytes(self, item: dict) -> bytes | None:
         if item["src"] == "file":
@@ -597,9 +710,7 @@ class Session:
             return
         joined = mp4.concat(segments)
         if joined is None:
-            self._errors.append(
-                f"{root_id}: these segments cannot be joined without re-encoding")
-            return
+            return self._unjoin(root_id)
 
         os.makedirs(os.path.dirname(target), exist_ok=True)
         tmp = target + ".part"
@@ -611,6 +722,30 @@ class Session:
         os.replace(tmp, target)
         os.utime(target, (items[0]["ts"], items[0]["ts"]))
 
+    def _unjoin(self, root_id: str):
+        """File the segments on their own when they cannot be glued together.
+
+        A segment owns no file: it lives inside the root's. So refusing to merge
+        must not be the end of it, or keeping a four-clip recording would file
+        the first ten seconds and quietly drop the rest.
+        """
+        with self.lock:
+            root = self.decisions.get(root_id)
+            if not root:
+                return
+            action, folder_id = root["action"], root.get("folder")
+            group = root.get("group")
+            members = self._members(root_id)
+            for member_id in members:
+                self.decisions.pop(member_id, None)
+        for member_id in members:
+            self.decide(member_id, action, folder_id)
+            if group:
+                self.decisions[member_id]["group"] = group
+        self._errors.append(
+            f"{root_id}: these clips cannot be joined without re-encoding — "
+            f"filed as {len(members) + 1} separate videos")
+
     def _recount(self):
         """Recompute how many memories each folder holds."""
         tally: dict[str, int] = {}
@@ -621,19 +756,29 @@ class Session:
             folder["count"] = tally.get(folder["id"], 0)
 
     def undo(self) -> str | None:
-        """Undo the most recent decision and put the cursor back on it."""
+        """Undo the most recent decision and put the cursor back on it.
+
+        A split recording decided as one card goes back as one card: it was a
+        single press, so it takes a single undo.
+        """
         with self.lock:
             if not self.decisions:
                 return None
-            item_id = self._last_decided()
-            decision = self.decisions.pop(item_id)
-            self._detach(item_id, decision)
+            latest = self._last_decided()
+            ids = self.decisions[latest].get("group") or [latest]
+            for item_id in ids:
+                # Detaching the root already drops the segments joined to it,
+                # which is why this pops before it detaches.
+                decision = self.decisions.pop(item_id, None)
+                if decision:
+                    self._detach(item_id, decision)
             self._recount()
-            if item_id in self.order:
-                self.cursor = self.order.index(item_id)
-            self._journal({"type": "undo", "id": item_id})
+            positions = [self.order.index(i) for i in ids if i in self.order]
+            if positions:
+                self.cursor = min(positions)
+            self._journal({"type": "undo", "id": ids[0]})
             self.touch()
-            return item_id
+            return ids[0]
 
     def _detach(self, item_id: str, decision: dict):
         """Roll back everything a decision produced, before dropping or replacing it."""
@@ -739,24 +884,51 @@ class Session:
             return out
 
     def queue(self, start: int, count: int) -> tuple[list[dict], int]:
-        """The next `count` memories *not yet decided*, starting at `start`.
+        """The next `count` cards *not yet decided*, starting at `start`.
 
         Each entry carries its absolute index in the sort order, and the second
         member of the tuple says where to resume scanning. Memories already
         sorted are skipped, so resuming a session or undoing never shows one
         again.
+
+        A card is usually one memory, but the segments of a split recording come
+        back as a single card carrying its `parts`: they are watched, and
+        decided, as the one video they were filmed as.
         """
         with self.lock:
-            out: list[dict] = []
+            window: list[tuple[int, dict]] = []
             i = max(0, start)
-            while i < len(self.order) and len(out) < count:
+            room = count + MAX_SEGMENTS
+            while i < len(self.order) and len(window) < room:
                 item_id = self.order[i]
                 if item_id not in self.decisions and item_id in self.by_id:
-                    out.append(dict(self.by_id[item_id], index=i))
+                    window.append((i, self.by_id[item_id]))
                 i += 1
+
+        # Reading video headers is I/O, so it happens outside the lock. Joining
+        # needs every segment to still be where it was: in `move` mode the first
+        # one is gone by then, so recordings stay split.
+        grouping = self.options.get("group_split", True) and self.options["mode"] != "move"
+        out: list[dict] = []
+        pos = 0
+        while pos < len(window) and len(out) < count:
+            index, item = window[pos]
+            span = self._segment_span(window, pos) if grouping and item["kind"] == "video" else 1
+            # A lone memory needs no header read: the browser measures it while
+            # playing it, which is soon enough for the panel.
+            card = dict(item, index=index, duration=None)
+            if span > 1:
+                parts = [dict(part, duration=self.duration_of(part))
+                         for _index, part in window[pos:pos + span]]
+                card["parts"] = parts
+                card["duration"] = sum(p["duration"] or 0 for p in parts)
+            out.append(card)
+            pos += span
+        following = window[pos][0] if pos < len(window) else i
+
         if self.cache:
-            self.cache.prefetch(out[:6])
-        return out, i
+            self.cache.prefetch([p for card in out[:4] for p in card.get("parts", [card])][:8])
+        return out, following
 
     def replay(self, action: str = "skip") -> int:
         """Put memories decided with `action` back in the queue (default: skipped)."""

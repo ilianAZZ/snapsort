@@ -209,6 +209,7 @@ export const Sorter = {
   updateJoin() {
     const button = $('#btn-join');
     const banner = $('#join-banner');
+    const split = $('#btn-split');
     if (!button) return;
     const possible = this.canJoin();
     const sure = this.isContinuation();
@@ -219,7 +220,23 @@ export const Sorter = {
       ? 'This clip continues the previous video — join them (J)'
       : 'Append this clip to the end of the previous video (J)';
     banner?.classList.toggle('hidden', !sure);
-    if (sure && this.session?.options?.auto_join) this.join();
+    split?.classList.toggle('hidden', (this.item(0)?.parts || []).length < 2);
+  },
+
+  /**
+   * Break the recording on screen back into its clips.
+   *
+   * Nothing in the export marks a split recording, so grouping is a judgement
+   * made from timestamps: this is the way out when it groups two videos that
+   * merely follow one another.
+   */
+  split() {
+    const item = this.item(0);
+    const parts = item?.parts || [];
+    if (parts.length < 2) return toast('This memory is a single clip');
+    this.buffer.splice(0, 1, ...parts.map((part, i) => ({ ...part, index: item.index + i })));
+    this.render();
+    toast(`Sorting the ${parts.length} clips separately`);
   },
 
   async join() {
@@ -235,8 +252,7 @@ export const Sorter = {
       const res = await api('/api/merge', { id: item.id });
       this.session.counts = res.counts;
       this.session.folders = res.folders;
-      this.last = { id: item.id, kind: item.kind, ts: item.ts, action: 'merge',
-        duration: this.topDuration };
+      this.last = this.trailOf(item, 'merge');
     } catch (e) {
       toast(e.message, true);
       this.busy = false;
@@ -248,6 +264,16 @@ export const Sorter = {
 
   /* ─────────── decisions ─────────── */
 
+  /** What a decision leaves behind for the Join button: its last clip. */
+  trailOf(item, action) {
+    const parts = item.parts || [item];
+    const tail = parts[parts.length - 1];
+    // topDuration was measured on the clip on screen, so it only stands in for
+    // a card that had a single one.
+    return { id: tail.id, kind: item.kind, ts: tail.ts, action,
+      duration: tail.duration ?? (parts.length === 1 ? this.topDuration : null) };
+  },
+
   async decide(action, folderId) {
     if (action === 'merge') return this.join();
     if (this.busy) return;
@@ -258,12 +284,16 @@ export const Sorter = {
     this.animateExit(action, folderId);
     if (folderId) flashFolder(folderId);
 
+    // A split recording travels as one decision: the server files the first
+    // clip and joins the rest onto it.
+    const parts = (item.parts || []).map(p => p.id);
     try {
-      const res = await api('/api/decide', { id: item.id, action, folder: folderId || null });
+      const res = await api('/api/decide',
+        { id: item.id, action, folder: folderId || null, parts });
       this.session.counts = res.counts;
       this.session.folders = res.folders;
-      this.last = { id: item.id, kind: item.kind, ts: item.ts, action,
-        duration: this.topDuration };
+      const joined = parts.length > 1 && JOINABLE.has(action);
+      this.last = this.trailOf(item, joined ? 'merge' : action);
     } catch (e) {
       toast(e.message, true);
       this.busy = false;
@@ -350,7 +380,7 @@ export const Sorter = {
   /* ─────────── playback ─────────── */
 
   togglePlay() {
-    const video = $('#cards .card:last-child video');
+    const video = $('#cards .card:last-child video.on');
     if (!video) return;
     if (video.paused) video.play().catch(() => {});
     else video.pause();
@@ -412,5 +442,6 @@ export function initSorter() {
   $('#btn-replay').onclick = () => Sorter.replaySkipped();
   $('#btn-join').onclick = () => Sorter.join();
   $('#join-now').onclick = () => Sorter.join();
+  $('#btn-split').onclick = () => Sorter.split();
   $$('.act[data-action]').forEach(b => { b.onclick = () => Sorter.decide(b.dataset.action); });
 }

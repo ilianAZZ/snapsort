@@ -100,7 +100,7 @@ export const Setup = {
       trash: $('#opt-trash').value,
       keep_overlay: $('#opt-overlay').checked,
       embed_metadata: $('#opt-metadata').checked,
-      auto_join: $('#opt-autojoin').checked,
+      group_split: $('#opt-group').checked,
     };
   },
 };

@@ -95,6 +95,22 @@
   background: rgba(255, 255, 255, .13); z-index: 2;
 }
 .vprog i { display: block; height: 100%; width: 0; background: var(--accent); }
+/* Where one clip of a split recording ends and the next begins. */
+.vprog .tick {
+  position: absolute; top: 0; width: 1px; height: 100%;
+  background: rgba(0, 0, 0, .55);
+}
+
+/* The clip waiting its turn stays loaded so the hand-over does not stall. */
+.card video.main:not(.on) { opacity: 0; pointer-events: none; }
+.part-of {
+  position: absolute; right: 14px; bottom: 14px; z-index: 2;
+  padding: 4px 9px; border-radius: 8px;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(10px);
+  font-size: 11.5px; font-weight: 600; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
 
 .hint {
   position: absolute; z-index: 1;
@@ -171,6 +187,7 @@
 .act.join:hover:not(:disabled) { border-color: var(--join); }
 .act.join b { color: var(--join); }
 .act.join:disabled { opacity: .3; cursor: not-allowed; }
+.act.split:hover { border-color: var(--join); } .act.split b { color: var(--join); }
 /* Timing says this clip continues the previous video: nudge without shouting. */
 .act.join.likely { border-color: var(--join); background: rgba(125, 211, 252, .1); }
 .act.join.likely b { animation: flash 1.6s ease infinite; }

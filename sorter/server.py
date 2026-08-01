@@ -309,8 +309,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._error("no session", 404)
 
         if route == "/api/decide":
+            # `parts` is the whole of a split recording, decided as one video.
+            parts = [p for p in (body.get("parts") or []) if isinstance(p, str)]
             try:
-                session.decide(body.get("id"), body.get("action"), body.get("folder"))
+                if len(parts) > 1:
+                    session.decide_group(parts, body.get("action"), body.get("folder"))
+                else:
+                    session.decide(body.get("id"), body.get("action"), body.get("folder"))
             except (KeyError, ValueError) as exc:
                 return self._error(str(exc))
             return self._send_json({"ok": True, "counts": session.counts(),

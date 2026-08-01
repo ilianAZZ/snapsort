@@ -165,11 +165,13 @@
                   right day and puts them on the map. Your archives are not touched.</small></span>
             </label>
             <label class="opt check">
-              <input type="checkbox" id="opt-autojoin">
-              <span>Join split videos automatically
-                <small>When a clip starts exactly where the previous video ended, append it
-                  without asking. Snapchat records no such marker, so this is a judgement
-                  call — leave it off to confirm each one with J.</small></span>
+              <input type="checkbox" id="opt-group" checked>
+              <span>Show a split video as one memory
+                <small>Snapchat cuts a long recording into ten-second clips. When the next
+                  one starts exactly where the previous ended, they play back to back on a
+                  single card and one decision files the whole video. Nothing in the export
+                  marks a split recording, so it is a judgement call — press S to sort the
+                  clips separately.</small></span>
             </label>
           </div>
         </div>
@@ -239,6 +241,9 @@
       <button class="act join" id="btn-join" disabled
               title="Append this clip to the end of the previous video (J)">
         <b>⇤</b><span>Join to previous</span></button>
+      <button class="act split hidden" id="btn-split"
+              title="Sort the clips of this recording one by one (S)">
+        <b>⇥</b><span>Split into clips</span></button>
     </div>
     <div class="folders" id="folders"></div>
   </footer>
@@ -300,6 +305,7 @@
       <div><kbd>↑</kbd><span>Favourite</span></div>
       <div><kbd>↓</kbd><span>Skip (decide later)</span></div>
       <div><kbd>J</kbd><span>Join this clip onto the <b>end of the previous</b> video</span></div>
+      <div><kbd>S</kbd><span>Split a grouped recording back into its clips</span></div>
       <div><kbd>1</kbd>…<kbd>0</kbd><span>Send to the matching folder</span></div>
       <div><kbd>N</kbd><span>New folder</span></div>
       <div><kbd>⌫</kbd><span>Undo the last decision</span></div>

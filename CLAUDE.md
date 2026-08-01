@@ -98,11 +98,13 @@ again on an already-decided memory first removes the files the previous decision
 produced (`_undo_files`), then copies again. `_recount()` recomputes every
 folder's counter: call it after any mutation of the decisions.
 
-**Queue** — `Session.queue(start, count)` returns the next memories **not yet
-decided** from `start`, each with its absolute index, plus the position to
-resume scanning from. That is what guarantees a sorted memory never reappears,
-including after an undo or a resumed session. The client keeps a local queue of
-8 cards; the top card is `buffer[0]`.
+**Queue** — `Session.queue(start, count)` returns the next **cards** not yet
+decided from `start`, each with its absolute index, plus the position to resume
+scanning from. That is what guarantees a sorted memory never reappears,
+including after an undo or a resumed session. A card is one memory, except for a
+split recording, which comes back as one card carrying its `parts` (see
+"Joining split videos"). The client keeps a local queue of 8 cards; the top card
+is `buffer[0]`.
 
 **Copy** — a single thread consumes a queue (`_enqueue` / `_run_worker`). The
 interface never waits for a copy. Errors land in `_errors`, are exposed by
@@ -115,6 +117,26 @@ Snapchat caps a recording at ten seconds, so a long video comes back as several
 consecutive memories. `merge` appends a clip to the file the previous decision
 produced.
 
+**The clips are grouped before they are decided, not after.** `queue()` returns
+a split recording as *one card* carrying its `parts`; the browser plays them
+back to back and one decision (`decide_group`) files the whole video — the first
+clip normally, the rest merged onto it. This replaced an earlier "join the clip
+you are looking at onto the last one you filed" flow, whose automatic mode
+merged clips the user had never seen. If you touch this, keep the ordering: a
+memory is watched in full *before* it is decided.
+
+- The grouping is `_segment_span()`, and it needs each clip's length:
+  `duration_of()` reads `mvhd` out of the first 256 KB of the file
+  (`mp4.duration`) and remembers it for the session. Only candidates are read —
+  memories more than `MAX_CLIP_S` apart cannot be one recording, and a lone card
+  reports no duration at all, since the browser measures it anyway.
+- Grouping is off in `move` mode: joining needs every clip to still be where it
+  was, and the first one is gone by then.
+- Every decision of a group carries `"group": [ids]`, which is what makes one
+  undo take the whole recording back. It is the only reason that field exists.
+- When `mp4.concat` refuses, `_unjoin()` files the segments separately instead.
+  A segment owns no file of its own, so failing quietly would file the first ten
+  seconds and drop the rest.
 - A merged item's decision holds `{"action": "merge", "root": <id>}` and owns no
   file of its own — the file belongs to the root. Group membership is *derived*
   from the decisions (`_members()`), never stored separately, so journal replay
@@ -131,6 +153,12 @@ produced.
 `None`) when the tracks disagree on codec configuration (`stsd`), timescale or
 track count, and when the file is fragmented — a badly glued video is worse than
 two separate ones.
+
+It also stretches the edit list (`_patch_edit_list`). An `elst` copied unchanged
+from the first clip caps playback at that clip's length: the file holds every
+segment, `mvhd` says the full duration, and players show only the first ten
+seconds. Leading entries are left alone (an empty edit is an audio delay); the
+last one absorbs the new length.
 
 Verified on a real export: identical packet counts and sizes, frame-for-frame
 identical video decode. Only the audio frames sitting exactly at the joins
@@ -191,7 +219,7 @@ GET  /api/media/{id}/{main|overlay}   binary, supports Range
 GET  /api/report           generates and returns REPORT.md
 POST /api/session/start    {sources[], dest, options} → starts the scan
 POST /api/session/resume   {dest}
-POST /api/decide           {id, action, folder?}
+POST /api/decide           {id, action, folder?, parts?} — parts = one recording
 POST /api/merge            {id} joins this clip to the previous decision
 POST /api/undo             undoes the last decision
 POST /api/replay           {action} back into the queue (skipped by default)
@@ -263,20 +291,27 @@ muted playback, `Sound.blocked` becomes true, and the first click or keypress
 restores it. The <kbd>M</kbd> preference lives in `localStorage`. Do not put
 `muted = true` back as a hard default: that was the original bug.
 
+**Grouped card.** When an item carries `parts`, `buildVideo` builds *two* video
+elements: one on screen (`.on`), the other already loading the clip after it, so
+the hand-over on `ended` does not stall. Anything that reaches for the video
+playing must select `video.on` — `Sound.resume()` and `togglePlay()` do.
+`Sorter.split()` drops the group back into the queue as individual cards, which
+is the way out when the timing lied.
+
 **Join button.** `Sorter.last` remembers what was just decided so the button can
 be enabled without asking the server; the server validates anyway. It is cleared
-on undo, because the client no longer knows what the previous decision is.
+on undo, because the client no longer knows what the previous decision is. It
+now holds the *last clip* of what was decided (`trailOf`), so a manual join
+after a grouped one lines up.
 
 Joining always goes *backwards*: the clip on screen is appended to the video
 already filed. Sorting is oldest-first, so that is the natural direction — say
 so in any wording you touch ("Join to previous"), because "join" on its own is
 ambiguous.
 
-Detection uses `Sorter.topDuration`, the duration the browser measured while
-playing the previous clip: a continuation starts within two seconds of
-`last.ts + last.duration`. Nothing in the export marks a split recording — the
-JSON carries only Date, Media Type and Location — so this timing is the only
-signal available, and `auto_join` is off by default because of it.
+Nothing in the export marks a split recording — the JSON carries only Date,
+Media Type and Location — so timing is the only signal available. Say so
+wherever the grouping is surfaced, and never let it be silent.
 
 Styling is split by area (`base` declares the variables, the other three build
 on it), unapologetically dark (media look better). The Snapchat yellow accent is
@@ -332,6 +367,13 @@ ms (not 68 ms — a sign the index is being rewritten), that the queue never sho
 a sorted memory again, that `Range` requests return 206, that produced files
 carry their date and GPS, and that nothing is written outside the destination.
 
+For the grouping, check that a split recording arrives as one card, that its
+clips play one after the other, that one decision files the lot and one undo
+takes it back, and that the file that comes out *plays* its full length —
+`ffprobe` reading the right duration is not enough, an edit list can still cap
+playback at the first clip. `ffmpeg -i out.mp4 -map 0:v -vsync passthrough -f
+framemd5 -` must list every clip's frames.
+
 To check a metadata or merge change, compare the decoded stream before and
 after — it must be identical:
 
@@ -372,7 +414,8 @@ characters. No debug `print` in shipped code.
 - Metadata for fragmented videos (`moof`) and 64-bit `moov` sizes: `embed_mp4`
   deliberately leaves those alone (there are none in a real export)
 - Joining videos across a folder source in `move` mode: the segment sources stay
-  in place, since only the root is transferred
+  in place, since only the root is transferred — which is why `queue()` does not
+  group there either
 - Sorting `chat_media/` too (another folder of the export, same approach)
 - Duplicate detection (Snapchat bursts produce a lot)
 - A grid view for a quick overview before sorting

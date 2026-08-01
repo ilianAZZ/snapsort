@@ -13,6 +13,7 @@ const ACTIONS = {
   Backspace: () => Sorter.undo(),
   u: () => Sorter.undo(),
   j: () => Sorter.join(),
+  s: () => Sorter.split(),
   ' ': () => Sorter.togglePlay(),
   m: () => Sorter.toggleSound(),
   c: () => Sorter.toggleOverlay(),

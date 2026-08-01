@@ -137,6 +137,7 @@ python3 sorter.py --dest ~/MyMemories        # jump straight back into a session
 | <kbd>↑</kbd> | **Favourite** — copied into `Favorites/` |
 | <kbd>↓</kbd> | **Skip** — decide later |
 | <kbd>J</kbd> | **Join** — append this clip to the previous video |
+| <kbd>S</kbd> | **Split** — sort a grouped recording clip by clip |
 | <kbd>1</kbd>…<kbd>0</kbd> | File into the folder bound to that digit |
 | <kbd>N</kbd> | New folder (a free key is assigned to it) |
 | <kbd>⌫</kbd> | Undo the last decision |
@@ -157,29 +158,36 @@ on screen there. Right-click a folder to rename it or change its key.
 Snapchat caps a single recording at ten seconds, so a longer video comes back as
 several consecutive memories, one after the other.
 
-Sorting runs **oldest first**, so you meet the beginning of the recording first.
-Keep it as usual, then press <kbd>J</kbd> on each following clip: **Join to
-previous** appends it to the end of the video you just kept. Segment 2 goes onto
-segment 1, segment 3 onto that, and so on — you always join *backwards*, onto
-what is already filed.
+Those clips arrive as **one card**. They play back to back, the panel gives the
+length of the whole recording, and a single decision files it: keep it and the
+clips are glued into one video, discard it and none of them are copied. You
+judge the video you watched, not a ten-second piece of it.
 
 ```text
-  clip 1        clip 2        clip 3
- (00:00)       (00:10)       (00:20)
-    │             │             │
-  → Keep         J             J          →   one 25-second video
+  clip 1    clip 2    clip 3
+ (00:00)   (00:10)   (00:20)
+    └─────────┴─────────┘
+       one card, 0:25          → Keep →   one 25-second video
 ```
 
 Nothing is re-encoded: the audio and video streams are copied across verbatim,
 so there is no quality loss, no waiting, and no ffmpeg to install. Undo works
-too — the video is rebuilt with one segment fewer.
+too — one press takes the whole recording back.
 
 **How it knows.** Nothing in the export says "this is part 2 of 3" — Snapchat
 ships only a date, a media type and a location, with no series marker of any
-kind. So Snapchat Memories Sorter works it out from the timing: when a clip starts exactly where
-the previous video ended, it says so and the Join button lights up. Turn on
-*Join split videos automatically* in the settings and it does it without asking.
-It is left off by default because it is a deduction, not a fact.
+kind. So Snapchat Memories Sorter works it out from the timing: it reads how
+long each video lasts and groups the next memory when it starts exactly where
+that one ended. It is a deduction, not a fact, so it is always visible — the
+card says "one recording, 4 clips" — and <kbd>S</kbd> breaks it apart when the
+guess is wrong. Turn *Show a split video as one memory* off in the settings to
+never group anything.
+
+When a recording ends up split anyway (its first clip already sorted, or its
+clips too different to be glued), <kbd>J</kbd> still appends the clip on screen
+to the video you last filed — always *backwards*, onto what is already there.
+If two clips genuinely cannot be joined without re-encoding, they are filed as
+separate videos rather than dropped, and a message says so.
 
 On a real export, roughly one video in five is a continuation of the one before
 it.
@@ -265,7 +273,7 @@ have already filed.
 | “Discard” means | copy nothing | copy into `_Trash/` |
 | Overlays | copied next to the media | ignored |
 | Date and place written in | yes (Exif / QuickTime) | no |
-| Join split videos automatically | no (confirm each with <kbd>J</kbd>) | yes |
+| Show a split video as one memory | yes (one card, one decision) | no, one card per clip |
 
 ## Command line
 

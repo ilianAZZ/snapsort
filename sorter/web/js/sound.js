@@ -46,7 +46,9 @@ export const Sound = {
 
   /** Give the sound back to the top card after an unblock or a re-enable. */
   resume() {
-    const video = $('#cards .card:last-child video');
+    // `.on` is the clip actually on screen: a split recording keeps the next
+    // one loaded beside it.
+    const video = $('#cards .card:last-child video.on');
     if (!video) return;
     video.muted = false;
     video.play().then(() => this.setBlocked(false)).catch(() => {

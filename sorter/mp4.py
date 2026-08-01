@@ -207,6 +207,42 @@ def _read_track(data, trak: tuple) -> dict | None:
     }
 
 
+def duration(data: bytes) -> float | None:
+    """Length in seconds, read from `mvhd`. None when `moov` is not in `data`.
+
+    Meant to be fed the first few hundred kilobytes of a file rather than the
+    whole thing: Snapchat writes `moov` before `mdat`, so the header is enough.
+    A file laid out the other way round simply reports no duration, and the
+    caller falls back to treating the clip as standalone.
+    """
+    off = 0
+    try:
+        while off + 8 <= len(data):
+            size, kind = struct.unpack_from(">I4s", data, off)
+            header = 8
+            if size == 1:
+                size = struct.unpack_from(">Q", data, off + 8)[0]
+                header = 16
+            elif size == 0:
+                size = len(data) - off
+            if size < header:
+                return None
+            if kind == b"moov":
+                mvhd = find(data, off + header, min(off + size, len(data)), b"mvhd")
+                if not mvhd:
+                    return None
+                base = mvhd[0] + mvhd[2] + 4        # past version and flags
+                if data[mvhd[0] + mvhd[2]] == 1:
+                    timescale, ticks = struct.unpack_from(">IQ", data, base + 16)
+                else:
+                    timescale, ticks = struct.unpack_from(">II", data, base + 8)
+                return ticks / timescale if timescale else None
+            off += size
+    except struct.error:
+        return None
+    return None
+
+
 def read(data: bytes) -> dict | None:
     """Parse a file into {movie_timescale, ftyp, tracks[]}, or None if unusable."""
     if b"moof" in data[:4096]:
@@ -306,6 +342,36 @@ def _patch_duration(raw: bytes, kind: bytes, duration: int) -> bytes:
     return bytes(buf)
 
 
+def _patch_edit_list(raw: bytes, track_duration: int) -> bytes:
+    """Stretch a track's edit list to the merged length.
+
+    An `elst` says which slice of the media to play. Copied unchanged from the
+    first segment it caps playback at that segment's duration: the file holds
+    every clip, players show only the first one. The leading entries are left
+    alone — an empty edit is an audio delay, and moving it would break sync —
+    and the last one takes up the slack.
+    """
+    edts = find(raw, next(boxes(raw, 0, len(raw)))[3], len(raw), b"edts")
+    if not edts:
+        return raw
+    elst = find(raw, edts[0] + edts[2], edts[0] + edts[1], b"elst")
+    if not elst:
+        return raw
+    off, size, header = elst
+    at = off + header + 4                               # past version and flags
+    count = struct.unpack_from(">I", raw, at)[0]
+    wide = raw[off + header] == 1
+    step = 20 if wide else 12
+    if not count or at + 4 + count * step > off + size:
+        return raw
+
+    buf = bytearray(raw)
+    fmt = ">Q" if wide else ">I"
+    before = sum(struct.unpack_from(fmt, buf, at + 4 + step * i)[0] for i in range(count - 1))
+    struct.pack_into(fmt, buf, at + 4 + step * (count - 1), max(0, track_duration - before))
+    return bytes(buf)
+
+
 def _build_trak(track: dict, data_offset: int, movie_timescale: int) -> bytes:
     raw = track["trak"]
     outer = next(boxes(raw, 0, len(raw)))
@@ -321,6 +387,7 @@ def _build_trak(track: dict, data_offset: int, movie_timescale: int) -> bytes:
     new_mdia = _patch_duration(new_mdia, b"mdhd", media_duration)
     new_trak = replace_child(raw, b"mdia", new_mdia)
     track_duration = int(media_duration * movie_timescale / track["timescale"])
+    new_trak = _patch_edit_list(new_trak, track_duration)
     return _patch_duration(new_trak, b"tkhd", track_duration)
 
 
